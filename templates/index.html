@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>game-bench</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero">
+        <p class="eyebrow">Daily browser-agent evaluation</p>
+        <h1>Leaderboard for {{ target_date }}</h1>
+        <p class="lede">
+          Fixed-model daily runs across logical puzzles with deterministic scoring,
+          trace capture, and replayable run artifacts.
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Daily standings</h2>
+          <a href="/leaderboard?date={{ target_date }}">JSON</a>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Rank</th>
+              <th>Model</th>
+              <th>Score</th>
+              <th>Solve rate</th>
+              <th>Puzzles</th>
+              <th>Avg latency</th>
+              <th>Avg cost</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in leaderboard_rows %}
+            <tr>
+              <td>{{ loop.index }}</td>
+              <td><strong>{{ row["model_id"] }}</strong><br />{{ row["provider"] }}</td>
+              <td>{{ "%.1f"|format(row["average_score"]) }}</td>
+              <td>{{ "%.0f"|format(row["solve_rate"] * 100) }}%</td>
+              <td>{{ row["puzzle_count"] }}</td>
+              <td>{{ "%.0f"|format(row["average_latency_ms"]) }} ms</td>
+              <td>${{ "%.4f"|format(row["average_cost_usd"]) }}</td>
+            </tr>
+            {% else %}
+            <tr>
+              <td colspan="7">No runs have been recorded for this date.</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Recent runs</h2>
+        </div>
+        <div class="run-grid">
+          {% for run in recent_runs %}
+          <a class="run-card" href="/runs/{{ run['id'] }}">
+            <p class="run-top">{{ run["display_name"] }} · {{ run["puzzle_date"] }}</p>
+            <h3>{{ run["model_id"] }}</h3>
+            <p>{{ run["provider"] }}</p>
+            <p>Status: {{ run["status"] }} / {{ run["solve_status"] or "pending" }}</p>
+            <p>Score: {{ "%.1f"|format(run["normalized_score"] or 0) }}</p>
+          </a>
+          {% else %}
+          <p>No benchmark runs have been created yet.</p>
+          {% endfor %}
+        </div>
+      </section>
+    </main>
+  </body>
+</html>

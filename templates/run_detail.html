@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Run {{ detail["run"]["id"] }}</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero compact">
+        <p class="eyebrow">Run detail</p>
+        <h1>{{ detail["run"]["model_id"] }} on {{ detail["run"]["display_name"] }}</h1>
+        <p class="lede">
+          {{ detail["run"]["provider"] }} · {{ detail["run"]["status"] }} ·
+          {{ detail["run"]["solve_status"] or "pending" }} ·
+          score {{ "%.1f"|format(detail["run"]["normalized_score"] or 0) }}
+        </p>
+      </section>
+
+      <section class="panel">
+        <div class="panel-header">
+          <h2>Run metadata</h2>
+          <a href="/runs/{{ detail['run']['id'] }}.json">JSON</a>
+        </div>
+        <pre>{{ json.dumps(dict(detail["run"]), indent=2) }}</pre>
+      </section>
+
+      <section class="panel">
+        <h2>Step trace</h2>
+        {% for step in detail["steps"] %}
+        <article class="trace-step">
+          <h3>Step {{ step["step_index"] }} · {{ step["action_kind"] }}</h3>
+          <p>{{ step["rationale"] }}</p>
+          <pre>{{ step["action_payload_json"] }}</pre>
+          <pre>{{ step["observation_json"] }}</pre>
+        </article>
+        {% else %}
+        <p>No steps recorded.</p>
+        {% endfor %}
+      </section>
+
+      <section class="panel">
+        <h2>Artifacts</h2>
+        {% for artifact in detail["artifacts"] %}
+        <article class="artifact-row">
+          <p><strong>{{ artifact["artifact_type"] }}</strong></p>
+          <p>{{ artifact["path"] }}</p>
+          <pre>{{ artifact["metadata_json"] }}</pre>
+        </article>
+        {% else %}
+        <p>No artifacts stored.</p>
+        {% endfor %}
+      </section>
+    </main>
+  </body>
+</html>
