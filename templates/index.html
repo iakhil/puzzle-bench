@@ -32,6 +32,7 @@
               <th>Puzzles</th>
               <th>Avg latency</th>
               <th>Avg cost</th>
+              <th>Replay</th>
             </tr>
           </thead>
           <tbody>
@@ -44,10 +45,18 @@
               <td>{{ row["puzzle_count"] }}</td>
               <td>{{ "%.0f"|format(row["average_latency_ms"]) }} ms</td>
               <td>${{ "%.4f"|format(row["average_cost_usd"]) }}</td>
+              <td>
+                {% if row["representative_run_id"] %}
+                <a href="/runs/{{ row['representative_run_id'] }}">Run</a>
+                {% endif %}
+                {% if row["representative_video_path"] %}
+                <br /><a href="{{ artifact_url(row['representative_video_path']) }}">Replay</a>
+                {% endif %}
+              </td>
             </tr>
             {% else %}
             <tr>
-              <td colspan="7">No runs have been recorded for this date.</td>
+              <td colspan="8">No runs have been recorded for this date.</td>
             </tr>
             {% endfor %}
           </tbody>
@@ -66,6 +75,9 @@
             <p>{{ run["provider"] }}</p>
             <p>Status: {{ run["status"] }} / {{ run["solve_status"] or "pending" }}</p>
             <p>Score: {{ "%.1f"|format(run["normalized_score"] or 0) }}</p>
+            {% if run["video_path"] %}
+            <p><a href="{{ artifact_url(run['video_path']) }}">Replay</a></p>
+            {% endif %}
           </a>
           {% else %}
           <p>No benchmark runs have been created yet.</p>

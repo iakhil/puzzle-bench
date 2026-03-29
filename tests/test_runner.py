@@ -6,7 +6,7 @@ import unittest
 from app.db import init_db, reset_db
 from app.model_adapters import ScriptedModelAdapter
 from app.puzzle_adapters import FixtureWordleAdapter
-from app.repository import fetch_leaderboard_rows, fetch_recent_runs
+from app.repository import add_artifact, fetch_leaderboard_rows, fetch_recent_runs, recompute_daily_leaderboard
 from app.runner import BenchmarkRunner
 from app.sandbox import LocalFixtureSandboxProvider
 
@@ -25,13 +25,18 @@ class RunnerTests(unittest.TestCase):
         )
 
         self.assertEqual(len(results), 1)
+        add_artifact(results[0].run_id, "video", "/tmp/fixture-video.webm", {"type": "playwright_video"})
+        recompute_daily_leaderboard(date(2026, 3, 27))
         leaderboard = fetch_leaderboard_rows(date(2026, 3, 27))
         self.assertEqual(len(leaderboard), 1)
         self.assertEqual(leaderboard[0]["average_score"], 100.0)
+        self.assertEqual(leaderboard[0]["representative_run_id"], results[0].run_id)
+        self.assertEqual(leaderboard[0]["representative_video_path"], "/tmp/fixture-video.webm")
 
         recent_runs = fetch_recent_runs()
         self.assertEqual(len(recent_runs), 1)
         self.assertEqual(recent_runs[0]["solve_status"], "solved")
+        self.assertEqual(recent_runs[0]["video_path"], "/tmp/fixture-video.webm")
 
 
 if __name__ == "__main__":

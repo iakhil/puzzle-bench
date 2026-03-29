@@ -3,13 +3,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import threading
+from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import Body, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 try:
+    from .agentic_browser import run_agentic_wordle_openai
     from .config import get_settings
     from .db import init_db
     from .repository import fetch_leaderboard_rows, fetch_recent_runs, fetch_run_detail
@@ -17,6 +20,7 @@ except ImportError:  # pragma: no cover - direct script execution fallback
     import sys
 
     sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from app.agentic_browser import run_agentic_wordle_openai
     from app.config import get_settings
     from app.db import init_db
     from app.repository import fetch_leaderboard_rows, fetch_recent_runs, fetch_run_detail
@@ -28,11 +32,31 @@ template_dir = Path(__file__).resolve().parent.parent / "templates"
 static_dir = Path(__file__).resolve().parent.parent / "static"
 templates = Jinja2Templates(directory=str(template_dir))
 app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+artifact_root = settings.artifacts_root
+agentic_run_lock = threading.Lock()
+
+
+def artifact_url(path: str | None) -> str | None:
+    if not path:
+        return None
+    if path.startswith("https://") or path.startswith("http://"):
+        return path
+    try:
+        relative = Path(path).resolve().relative_to(artifact_root.resolve())
+    except ValueError:
+        return None
+    return f"/artifacts/{relative.as_posix()}"
 
 
 @app.on_event("startup")
 def on_startup() -> None:
     init_db()
+    app.state.agentic_active_run = None
+
+
+@app.get("/health", response_class=JSONResponse)
+def healthcheck() -> JSONResponse:
+    return JSONResponse({"ok": True, "active_run": app.state.agentic_active_run})
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -48,6 +72,7 @@ def homepage(request: Request) -> HTMLResponse:
             "target_date": target_date.isoformat(),
             "leaderboard_rows": leaderboard_rows,
             "recent_runs": recent_runs,
+            "artifact_url": artifact_url,
         },
     )
 
@@ -64,8 +89,58 @@ def run_detail_page(request: Request, run_id: str) -> HTMLResponse:
             "request": request,
             "detail": detail,
             "json": json,
+            "artifact_url": artifact_url,
         },
     )
+
+
+@app.get("/artifacts/{artifact_path:path}")
+def artifact_file(artifact_path: str) -> FileResponse:
+    target = (artifact_root / artifact_path).resolve()
+    if artifact_root.resolve() not in target.parents and target != artifact_root.resolve():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail="Artifact not found")
+    return FileResponse(target)
+
+
+@app.post("/internal/runs/wordle-agentic", response_class=JSONResponse)
+def trigger_wordle_agentic_run(
+    payload: dict[str, Any] | None = Body(default=None),
+    authorization: str | None = Header(default=None),
+) -> JSONResponse:
+    if not settings.admin_token:
+        raise HTTPException(status_code=503, detail="Admin token is not configured")
+    expected = f"Bearer {settings.admin_token}"
+    if authorization != expected:
+        raise HTTPException(status_code=401, detail="Invalid admin token")
+    if not agentic_run_lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="An agentic run is already in progress")
+
+    requested_date = None
+    if payload and payload.get("target_date"):
+        requested_date = datetime.fromisoformat(str(payload["target_date"])).date()
+    else:
+        requested_date = datetime.now(timezone.utc).date()
+
+    def _run() -> None:
+        try:
+            result = run_agentic_wordle_openai(target_date=requested_date)
+            app.state.agentic_active_run = {"run_id": result.run_id, "status": result.solve_status, "completed": True}
+        except Exception as exc:
+            app.state.agentic_active_run = {
+                "run_id": run_preview_id,
+                "status": "failed",
+                "error": str(exc),
+                "target_date": requested_date.isoformat(),
+            }
+        finally:
+            agentic_run_lock.release()
+
+    run_preview_id = f"queued-{requested_date.isoformat()}"
+    app.state.agentic_active_run = {"run_id": run_preview_id, "status": "running", "target_date": requested_date.isoformat()}
+    threading.Thread(target=_run, daemon=True).start()
+    return JSONResponse({"queued": True, "target_date": requested_date.isoformat(), "run": app.state.agentic_active_run})
 
 
 @app.get("/leaderboard", response_class=JSONResponse)
@@ -83,6 +158,8 @@ def leaderboard_api(date: str | None = None) -> JSONResponse:
                 "puzzle_count": row["puzzle_count"],
                 "average_latency_ms": row["average_latency_ms"],
                 "average_cost_usd": row["average_cost_usd"],
+                "representative_run_id": row["representative_run_id"],
+                "representative_video_path": row["representative_video_path"] or None,
             }
             for row in rows
         ]

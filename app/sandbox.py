@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from pathlib import Path
 import json
 import os
 import uuid
+from dataclasses import dataclass
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from playwright.sync_api import Browser, Page, Playwright, sync_playwright
 
@@ -186,8 +187,10 @@ class PlaywrightSandboxSession(SandboxSession):
 
 class BrowserbaseSandboxProvider(SandboxProvider):
     def __init__(self) -> None:
-        self.api_key = os.getenv("BROWSERBASE_API_KEY")
-        self.project_id = os.getenv("BROWSERBASE_PROJECT_ID")
+        settings = get_settings()
+        self.api_key = settings.browserbase_api_key
+        self.project_id = settings.browserbase_project_id
+        self.region = settings.browserbase_region
 
     @property
     def provider_name(self) -> str:
@@ -196,14 +199,29 @@ class BrowserbaseSandboxProvider(SandboxProvider):
     def start_session(self, puzzle: PuzzleInstance, run_id: str) -> SandboxSession:
         if not self.api_key or not self.project_id:
             raise RuntimeError("Browserbase credentials are not configured.")
-        raise NotImplementedError(
-            "Browserbase session startup is scaffolded but requires the Browserbase SDK or REST integration."
+        session = _create_browserbase_session(
+            api_key=self.api_key,
+            project_id=self.project_id,
+            region=self.region,
+            run_id=run_id,
+        )
+        playwright = sync_playwright().start()
+        browser = playwright.chromium.connect_over_cdp(session["connectUrl"])
+        context = browser.contexts[0] if browser.contexts else browser.new_context(viewport={"width": 1440, "height": 1200})
+        page = context.pages[0] if context.pages else context.new_page()
+        return PlaywrightSandboxSession(
+            puzzle=puzzle,
+            run_id=run_id,
+            playwright=playwright,
+            browser=browser,
+            page=page,
+            state={"browserbase_session_id": session["id"], "browserbase_replay_url": _browserbase_replay_url(session["id"])},
         )
 
 
 def write_run_artifact(run_id: str, artifact_type: str, payload: dict[str, object]) -> str:
     settings = get_settings()
-    artifact_dir = settings.base_dir / "data" / "artifacts" / run_id
+    artifact_dir = settings.artifacts_root / run_id
     artifact_dir.mkdir(parents=True, exist_ok=True)
     path = artifact_dir / f"{artifact_type}-{uuid.uuid4().hex[:8]}.json"
     path.write_text(json.dumps(payload, indent=2, sort_keys=True))
@@ -212,8 +230,37 @@ def write_run_artifact(run_id: str, artifact_type: str, payload: dict[str, objec
 
 def write_screenshot_artifact(run_id: str, page: Page, artifact_type: str) -> str:
     settings = get_settings()
-    artifact_dir = settings.base_dir / "data" / "artifacts" / run_id
+    artifact_dir = settings.artifacts_root / run_id
     artifact_dir.mkdir(parents=True, exist_ok=True)
     path = artifact_dir / f"{artifact_type}-{uuid.uuid4().hex[:8]}.png"
     page.screenshot(path=str(path), full_page=True)
     return str(path)
+
+
+def _create_browserbase_session(api_key: str, project_id: str, region: str, run_id: str) -> dict[str, object]:
+    request = Request(
+        "https://api.browserbase.com/v1/sessions",
+        data=json.dumps(
+            {
+                "projectId": project_id,
+                "keepAlive": True,
+                "region": region,
+                "browserSettings": {"viewport": {"width": 1440, "height": 1200}},
+                "userMetadata": {"runId": run_id, "app": "game-bench"},
+            }
+        ).encode("utf-8"),
+        headers={"Content-Type": "application/json", "X-BB-API-Key": api_key},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"Browserbase session creation failed with status {exc.code}: {detail}") from exc
+    except URLError as exc:
+        raise RuntimeError(f"Browserbase session creation failed: {exc.reason}") from exc
+
+
+def _browserbase_replay_url(session_id: str) -> str:
+    return f"https://www.browserbase.com/sessions/{session_id}"

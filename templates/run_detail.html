@@ -45,7 +45,17 @@
         {% for artifact in detail["artifacts"] %}
         <article class="artifact-row">
           <p><strong>{{ artifact["artifact_type"] }}</strong></p>
+          {% set artifact_link = artifact_url(artifact["path"]) %}
+          {% if artifact_link %}
+          <p><a href="{{ artifact_link }}">{{ artifact["path"] }}</a></p>
+          {% else %}
           <p>{{ artifact["path"] }}</p>
+          {% endif %}
+          {% if artifact["artifact_type"] == "video" and artifact_link and (artifact_link.endswith(".webm") or artifact_link.endswith(".mp4")) %}
+          <video controls preload="metadata" style="max-width: 100%;">
+            <source src="{{ artifact_link }}" />
+          </video>
+          {% endif %}
           <pre>{{ artifact["metadata_json"] }}</pre>
         </article>
         {% else %}

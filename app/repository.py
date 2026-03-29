@@ -100,6 +100,33 @@ def update_run_result(
         )
 
 
+def mark_run_failed(
+    run_id: str,
+    failure_category: str,
+    completed_at: str,
+    raw_metrics: dict[str, Any] | None = None,
+) -> None:
+    with connect() as conn:
+        conn.execute(
+            """
+            UPDATE benchmark_runs
+            SET status = 'failed',
+                solve_status = 'failed',
+                normalized_score = 0.0,
+                raw_metrics_json = ?,
+                failure_category = ?,
+                completed_at = ?
+            WHERE id = ?
+            """,
+            (
+                json.dumps(raw_metrics or {}, sort_keys=True),
+                failure_category,
+                completed_at,
+                run_id,
+            ),
+        )
+
+
 def add_attempt_step(
     run_id: str,
     step_index: int,
@@ -186,10 +213,46 @@ def fetch_leaderboard_rows(target_date: date) -> list[sqlite3.Row]:
     with connect() as conn:
         rows = conn.execute(
             """
-            SELECT leaderboard_date, provider, model_id, average_score, solve_rate,
-                   puzzle_count, average_latency_ms, average_cost_usd
-            FROM leaderboard_daily
-            WHERE leaderboard_date = ?
+            WITH latest_runs AS (
+                SELECT
+                    br.id,
+                    br.provider,
+                    br.model_id,
+                    br.normalized_score,
+                    br.solve_status,
+                    br.latency_ms,
+                    br.cost_estimate_usd,
+                    pi.puzzle_date,
+                    pi.puzzle_key,
+                    (
+                        SELECT path
+                        FROM artifacts artifact
+                        WHERE artifact.run_id = br.id AND artifact.artifact_type = 'video'
+                        ORDER BY artifact.id DESC
+                        LIMIT 1
+                    ) AS video_path,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY pi.puzzle_date, pi.puzzle_key, br.provider, br.model_id
+                        ORDER BY COALESCE(br.completed_at, br.started_at) DESC, br.id DESC
+                    ) AS row_num
+                FROM benchmark_runs br
+                JOIN puzzle_instances pi ON pi.id = br.puzzle_instance_id
+                WHERE pi.puzzle_date = ? AND br.status = 'completed'
+            )
+            SELECT
+                puzzle_date AS leaderboard_date,
+                provider,
+                model_id,
+                AVG(normalized_score) AS average_score,
+                AVG(CASE WHEN solve_status = 'solved' THEN 1.0 ELSE 0.0 END) AS solve_rate,
+                COUNT(*) AS puzzle_count,
+                AVG(latency_ms) AS average_latency_ms,
+                AVG(cost_estimate_usd) AS average_cost_usd,
+                MAX(id) AS representative_run_id,
+                MAX(COALESCE(video_path, '')) AS representative_video_path
+            FROM latest_runs
+            WHERE row_num = 1
+            GROUP BY puzzle_date, provider, model_id
             ORDER BY average_score DESC, solve_rate DESC, average_latency_ms ASC
             """,
             (target_date.isoformat(),),
@@ -203,6 +266,13 @@ def fetch_recent_runs(limit: int = 50) -> list[sqlite3.Row]:
             """
             SELECT br.id, br.provider, br.model_id, br.status, br.solve_status,
                    br.normalized_score, br.started_at, br.completed_at, br.failure_category,
+                   (
+                       SELECT path
+                       FROM artifacts artifact
+                       WHERE artifact.run_id = br.id AND artifact.artifact_type = 'video'
+                       ORDER BY artifact.id DESC
+                       LIMIT 1
+                   ) AS video_path,
                    pi.puzzle_key, pi.display_name, pi.puzzle_date
             FROM benchmark_runs br
             JOIN puzzle_instances pi ON pi.id = br.puzzle_instance_id

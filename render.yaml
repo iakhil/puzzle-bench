@@ -1,0 +1,59 @@
+services:
+  - type: web
+    name: game-bench
+    runtime: python
+    plan: starter
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m playwright install chromium
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: GAME_BENCH_DATA_ROOT
+        value: /var/data
+      - key: GAME_BENCH_DB_PATH
+        value: /var/data/game_bench.db
+      - key: GAME_BENCH_ARTIFACTS_ROOT
+        value: /var/data/artifacts
+      - key: GAME_BENCH_BROWSER_PROVIDER
+        value: browserbase
+      - key: GAME_BENCH_TIMEZONE
+        value: UTC
+      - key: OPENAI_COMPUTER_MODEL
+        value: gpt-5.4
+      - key: BROWSERBASE_REGION
+        value: us-west-2
+      - key: GAME_BENCH_ADMIN_TOKEN
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: BROWSERBASE_API_KEY
+        sync: false
+      - key: BROWSERBASE_PROJECT_ID
+        sync: false
+    disk:
+      name: game-bench-data
+      mountPath: /var/data
+      sizeGB: 5
+
+  - type: cron
+    name: game-bench-daily-wordle
+    runtime: python
+    schedule: "0 8 * * *"
+    buildCommand: pip install requests
+    startCommand: >
+      python -c "import json, os, urllib.request;
+      req = urllib.request.Request(
+        os.environ['GAME_BENCH_BASE_URL'] + '/internal/runs/wordle-agentic',
+        data=json.dumps({}).encode('utf-8'),
+        headers={
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + os.environ['GAME_BENCH_ADMIN_TOKEN']
+        },
+        method='POST'
+      );
+      print(urllib.request.urlopen(req, timeout=60).read().decode('utf-8'))"
+    envVars:
+      - key: GAME_BENCH_BASE_URL
+        sync: false
+      - key: GAME_BENCH_ADMIN_TOKEN
+        sync: false

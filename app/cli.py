@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
+import os
 import sys
 
 try:
@@ -11,7 +12,7 @@ try:
     from .model_adapters import ScriptedWordleModelAdapter
     from .puzzle_adapters import default_puzzle_adapters, demo_puzzle_adapters
     from .runner import BenchmarkRunner
-    from .sandbox import LocalFixtureSandboxProvider, LocalPlaywrightSandboxProvider
+    from .sandbox import BrowserbaseSandboxProvider, LocalFixtureSandboxProvider, LocalPlaywrightSandboxProvider
     from .repository import recompute_daily_leaderboard
 except ImportError:  # pragma: no cover - direct script execution fallback
     from pathlib import Path
@@ -24,7 +25,7 @@ except ImportError:  # pragma: no cover - direct script execution fallback
     from app.model_adapters import ScriptedWordleModelAdapter
     from app.puzzle_adapters import default_puzzle_adapters, demo_puzzle_adapters
     from app.runner import BenchmarkRunner
-    from app.sandbox import LocalFixtureSandboxProvider, LocalPlaywrightSandboxProvider
+    from app.sandbox import BrowserbaseSandboxProvider, LocalFixtureSandboxProvider, LocalPlaywrightSandboxProvider
     from app.repository import recompute_daily_leaderboard
 
 
@@ -84,10 +85,14 @@ def _print_agentic_progress(event: str, payload: dict[str, object]) -> None:
             f"[start] openai/{payload.get('model_id')} agentic browser run "
             f"(run_id={payload.get('run_id')})"
         )
+        print(f"  sandbox: {payload.get('sandbox_type')}")
         print(f"  artifacts: {payload.get('artifact_dir')}")
         return
     if event == "browser_started":
         print(f"[browser] opened {payload.get('current_url')} headless={payload.get('headless')}")
+        replay_url = payload.get("replay_url")
+        if replay_url:
+            print(f"  replay: {replay_url}")
         return
     if event == "reasoning":
         print(f"[reasoning] {payload.get('summary')}")
@@ -150,26 +155,32 @@ def seed_demo(target_date: date) -> None:
 
 def run_live_wordle(target_date: date) -> None:
     init_db()
-    runner = BenchmarkRunner(LocalPlaywrightSandboxProvider(), progress_callback=_print_progress)
+    provider = BrowserbaseSandboxProvider() if (os.getenv("GAME_BENCH_BROWSER_PROVIDER") == "browserbase") else LocalPlaywrightSandboxProvider()
+    runner = BenchmarkRunner(provider, progress_callback=_print_progress)
     results = runner.run_daily_benchmark(target_date, default_puzzle_adapters(), LIVE_MODELS)
     _print_results(results)
 
 
 def run_live_wordle_openai(target_date: date) -> None:
     init_db()
-    runner = BenchmarkRunner(LocalPlaywrightSandboxProvider(), progress_callback=_print_progress)
+    provider = BrowserbaseSandboxProvider() if (os.getenv("GAME_BENCH_BROWSER_PROVIDER") == "browserbase") else LocalPlaywrightSandboxProvider()
+    runner = BenchmarkRunner(provider, progress_callback=_print_progress)
     results = runner.run_daily_benchmark(target_date, default_puzzle_adapters(), [OpenAIWordleModelAdapter()])
     _print_results(results)
 
 
-def run_live_wordle_openai_agentic() -> None:
-    result = run_agentic_wordle_openai(progress_callback=_print_agentic_progress)
+def run_live_wordle_openai_agentic(target_date: date) -> None:
+    init_db()
+    result = run_agentic_wordle_openai(target_date=target_date, progress_callback=_print_agentic_progress)
     print(
-        f"Completed agentic browser run: model={result.model_id} turns={result.turn_count} "
-        f"final_url={result.final_url}"
+        f"Completed agentic browser run: model={result.model_id} status={result.solve_status} "
+        f"score={result.normalized_score:.1f} turns={result.turn_count} final_url={result.final_url}"
     )
     if result.final_text:
         print(f"Final summary: {result.final_text}")
+    print(f"Run detail: /runs/{result.run_id}")
+    if result.video_path:
+        print(f"Video: {result.video_path}")
     print(f"Artifacts: {result.artifact_dir}")
 
 
@@ -196,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
         run_live_wordle_openai(target_date)
         return 0
     if command == "run-live-wordle-openai-agentic":
-        run_live_wordle_openai_agentic()
+        run_live_wordle_openai_agentic(target_date)
         return 0
     if command == "fetch-daily-puzzles":
         BenchmarkRunner(LocalFixtureSandboxProvider()).fetch_daily_puzzles(demo_puzzle_adapters(), target_date)
