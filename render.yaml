@@ -3,11 +3,14 @@ services:
     name: game-bench
     runtime: python
     plan: starter
+    env: python
     buildCommand: |
       pip install -r requirements.txt
       python -m playwright install chromium
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.9
       - key: GAME_BENCH_DATA_ROOT
         value: /var/data
       - key: GAME_BENCH_DB_PATH
@@ -38,6 +41,7 @@ services:
   - type: cron
     name: game-bench-daily-wordle
     runtime: python
+    env: python
     schedule: "0 8 * * *"
     buildCommand: pip install requests
     startCommand: >
@@ -53,6 +57,8 @@ services:
       );
       print(urllib.request.urlopen(req, timeout=60).read().decode('utf-8'))"
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.13.9
       - key: GAME_BENCH_BASE_URL
         sync: false
       - key: GAME_BENCH_ADMIN_TOKEN
