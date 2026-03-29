@@ -58,7 +58,7 @@ class ScriptedWordleModelAdapter(ModelAdapter):
 @dataclass
 class OpenAIWordleModelAdapter(ModelAdapter):
     provider: str = "openai"
-    model_id: str = "gpt-4.1-mini"
+    model_id: str = "gpt-5.4"
     api_base: str = "https://api.openai.com/v1/responses"
 
     def next_action(self, observation: Observation, run_state: dict[str, object]) -> AgentDecision:

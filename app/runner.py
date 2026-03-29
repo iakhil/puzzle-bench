@@ -5,6 +5,7 @@ from datetime import date, datetime, timezone
 import hashlib
 import json
 import time
+from typing import Callable
 import uuid
 
 from .config import get_settings
@@ -27,12 +28,23 @@ class DailyRunResult:
     provider: str
     puzzle_key: str
     benchmark_date: date
+    solve_status: str
+    normalized_score: float
+    latency_ms: int
+    failure_category: str | None
+    snapshot_path: str
+    trace_path: str
 
 
 class BenchmarkRunner:
-    def __init__(self, sandbox_provider: SandboxProvider) -> None:
+    def __init__(
+        self,
+        sandbox_provider: SandboxProvider,
+        progress_callback: Callable[[str, dict[str, object]], None] | None = None,
+    ) -> None:
         self.sandbox_provider = sandbox_provider
         self.settings = get_settings()
+        self.progress_callback = progress_callback
 
     def fetch_daily_puzzles(self, adapters: list[PuzzleAdapter], target_date: date) -> None:
         for adapter in adapters:
@@ -62,6 +74,10 @@ class BenchmarkRunner:
         recompute_daily_leaderboard(target_date)
         return results
 
+    def _emit_progress(self, event: str, **payload: object) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(event, payload)
+
     def _run_once(
         self,
         target_date: date,
@@ -86,6 +102,14 @@ class BenchmarkRunner:
             sandbox_session_id=run_id,
             prompt_config_hash=prompt_hash,
             started_at=started_at.isoformat(),
+        )
+        self._emit_progress(
+            "run_started",
+            run_id=run_id,
+            provider=model_adapter.provider,
+            model_id=model_adapter.model_id,
+            puzzle_key=puzzle_adapter.puzzle_key,
+            benchmark_date=target_date.isoformat(),
         )
         session = self.sandbox_provider.start_session(puzzle, run_id)
         run_context = RunContext(
@@ -123,6 +147,17 @@ class BenchmarkRunner:
                     observation=observation,
                     artifacts={},
                 )
+                self._emit_progress(
+                    "step_completed",
+                    run_id=run_id,
+                    provider=model_adapter.provider,
+                    model_id=model_adapter.model_id,
+                    puzzle_key=puzzle_adapter.puzzle_key,
+                    step_index=step_index,
+                    action_kind=decision.action.kind,
+                    screenshot_path=observation.screenshot_path,
+                    visible_text=observation.visible_text,
+                )
                 if decision.action.kind == "finish" or puzzle_adapter.is_terminal(session, puzzle):
                     break
             scored_attempt = puzzle_adapter.score(session, puzzle, trace)
@@ -142,6 +177,19 @@ class BenchmarkRunner:
                 cost_estimate_usd=cost_estimate,
                 completed_at=datetime.now(timezone.utc).isoformat(),
             )
+            self._emit_progress(
+                "run_completed",
+                run_id=run_id,
+                provider=model_adapter.provider,
+                model_id=model_adapter.model_id,
+                puzzle_key=puzzle_adapter.puzzle_key,
+                solve_status=scored_attempt.solve_status,
+                normalized_score=scored_attempt.normalized_score,
+                latency_ms=latency_ms,
+                failure_category=scored_attempt.failure_category,
+                snapshot_path=snapshot_path,
+                trace_path=trace_path,
+            )
         finally:
             session.close()
         return DailyRunResult(
@@ -150,6 +198,12 @@ class BenchmarkRunner:
             provider=model_adapter.provider,
             puzzle_key=puzzle_adapter.puzzle_key,
             benchmark_date=target_date,
+            solve_status=scored_attempt.solve_status,
+            normalized_score=scored_attempt.normalized_score,
+            latency_ms=latency_ms,
+            failure_category=scored_attempt.failure_category,
+            snapshot_path=snapshot_path,
+            trace_path=trace_path,
         )
 
     def _apply_action(self, session, kind: str, payload: dict[str, object]) -> None:

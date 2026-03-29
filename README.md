@@ -37,7 +37,17 @@ Run Wordle with a real OpenAI model decision loop:
 
 ```bash
 export OPENAI_API_KEY=...
+export GAME_BENCH_HEADLESS=0
 python3 -m app.cli run-live-wordle-openai
+```
+
+Run Wordle with a separate fully agentic browser-use loop where the model chooses low-level UI actions:
+
+```bash
+export OPENAI_API_KEY=...
+export GAME_BENCH_AGENTIC_HEADLESS=0
+export GAME_BENCH_AGENTIC_KEEP_OPEN_SECONDS=20
+python3 -m app.cli run-live-wordle-openai-agentic
 ```
 
 ## Commands
@@ -47,6 +57,7 @@ python3 -m app.cli seed-demo
 python3 -m app.cli run-daily-benchmark
 python3 -m app.cli run-live-wordle
 python3 -m app.cli run-live-wordle-openai
+python3 -m app.cli run-live-wordle-openai-agentic
 python3 -m app.cli fetch-daily-puzzles
 python3 -m app.cli recompute-leaderboard
 ```
@@ -55,5 +66,11 @@ python3 -m app.cli recompute-leaderboard
 
 - `GAME_BENCH_DB_PATH`: SQLite database path. Defaults to `data/game_bench.db`
 - `GAME_BENCH_TIMEZONE`: Canonical benchmark timezone. Defaults to `UTC`
+- `GAME_BENCH_HEADLESS`: Set to `0` to show the Playwright browser window. Defaults to `1`
+- `GAME_BENCH_KEEP_OPEN_SECONDS`: How long a headed browser stays open after the run ends. Defaults to `10` when headed, `0` when headless
+- `GAME_BENCH_AGENTIC_HEADLESS`: Set to `0` to show the browser window for the separate computer-use agent. Defaults to `0`
+- `GAME_BENCH_AGENTIC_KEEP_OPEN_SECONDS`: How long the separate agentic browser stays open after the run ends. Defaults to `15` when headed
+- `GAME_BENCH_AGENTIC_MAX_TURNS`: Max computer-use turns before the separate agentic run aborts. Defaults to `30`
+- `OPENAI_COMPUTER_MODEL`: OpenAI model for the separate agentic browser-use path. Defaults to `gpt-5.4`
 - `BROWSERBASE_API_KEY`: Optional Browserbase API key
 - `BROWSERBASE_PROJECT_ID`: Optional Browserbase project id

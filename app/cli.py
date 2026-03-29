@@ -4,6 +4,7 @@ from datetime import date, datetime, timezone
 import sys
 
 try:
+    from .agentic_browser import run_agentic_wordle_openai
     from .db import init_db
     from .model_adapters import OpenAIWordleModelAdapter
     from .model_adapters import ScriptedModelAdapter
@@ -16,6 +17,7 @@ except ImportError:  # pragma: no cover - direct script execution fallback
     from pathlib import Path
 
     sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from app.agentic_browser import run_agentic_wordle_openai
     from app.db import init_db
     from app.model_adapters import OpenAIWordleModelAdapter
     from app.model_adapters import ScriptedModelAdapter
@@ -39,6 +41,100 @@ LIVE_MODELS = [
 ]
 
 
+def _print_progress(event: str, payload: dict[str, object]) -> None:
+    model_label = f"{payload.get('provider')}/{payload.get('model_id')}"
+    puzzle_key = str(payload.get("puzzle_key", "unknown"))
+    run_id = str(payload.get("run_id", "unknown"))
+    if event == "run_started":
+        print(f"[start] {model_label} on {puzzle_key} (run_id={run_id})")
+        return
+    if event == "step_completed":
+        step_index = int(payload.get("step_index", 0)) + 1
+        action_kind = payload.get("action_kind")
+        print(f"[step {step_index}] {model_label} {action_kind} on {puzzle_key}")
+        visible_text = str(payload.get("visible_text", "")).strip()
+        if visible_text:
+            print(visible_text)
+        screenshot_path = payload.get("screenshot_path")
+        if screenshot_path:
+            print(f"  screenshot: {screenshot_path}")
+        return
+    if event == "run_completed":
+        score = float(payload.get("normalized_score", 0.0))
+        latency_ms = int(payload.get("latency_ms", 0))
+        solve_status = payload.get("solve_status")
+        failure_category = payload.get("failure_category")
+        print(
+            f"[done] {model_label} on {puzzle_key} "
+            f"status={solve_status} score={score:.1f} latency_ms={latency_ms} run_id={run_id}"
+        )
+        if failure_category:
+            print(f"  failure_category: {failure_category}")
+        snapshot_path = payload.get("snapshot_path")
+        trace_path = payload.get("trace_path")
+        if snapshot_path:
+            print(f"  snapshot: {snapshot_path}")
+        if trace_path:
+            print(f"  trace: {trace_path}")
+
+
+def _print_agentic_progress(event: str, payload: dict[str, object]) -> None:
+    if event == "run_started":
+        print(
+            f"[start] openai/{payload.get('model_id')} agentic browser run "
+            f"(run_id={payload.get('run_id')})"
+        )
+        print(f"  artifacts: {payload.get('artifact_dir')}")
+        return
+    if event == "browser_started":
+        print(f"[browser] opened {payload.get('current_url')} headless={payload.get('headless')}")
+        return
+    if event == "reasoning":
+        print(f"[reasoning] {payload.get('summary')}")
+        return
+    if event == "turn_started":
+        actions = payload.get("actions") or []
+        print(f"[turn {payload.get('turn_index')}] model returned {len(actions)} action(s)")
+        for index, action in enumerate(actions, start=1):
+            print(f"  action {index}: {action}")
+        return
+    if event == "computer_action":
+        print(f"[exec] {payload.get('action')}")
+        return
+    if event == "screenshot_captured":
+        print(
+            f"[screenshot] turn={payload.get('turn_index')} "
+            f"url={payload.get('current_url')} path={payload.get('screenshot_path')}"
+        )
+        return
+    if event == "run_completed":
+        print(
+            f"[done] openai/{payload.get('model_id')} final_url={payload.get('final_url')} "
+            f"turns={payload.get('turn_count')}"
+        )
+        final_text = str(payload.get("final_text", "")).strip()
+        if final_text:
+            print(f"  final_text: {final_text}")
+        print(f"  artifacts: {payload.get('artifact_dir')}")
+
+
+def _print_results(results) -> None:
+    if not results:
+        print("No runs were created.")
+        return
+    print("Completed runs:")
+    for result in results:
+        print(
+            f"- {result.provider}/{result.model_id} on {result.puzzle_key}: "
+            f"status={result.solve_status} score={result.normalized_score:.1f} "
+            f"latency_ms={result.latency_ms} run_id={result.run_id}"
+        )
+        if result.failure_category:
+            print(f"  failure_category={result.failure_category}")
+        print(f"  snapshot={result.snapshot_path}")
+        print(f"  trace={result.trace_path}")
+
+
 def _target_date_from_args(args: list[str]) -> date:
     if args:
         return date.fromisoformat(args[0])
@@ -47,20 +143,34 @@ def _target_date_from_args(args: list[str]) -> date:
 
 def seed_demo(target_date: date) -> None:
     init_db()
-    runner = BenchmarkRunner(LocalFixtureSandboxProvider())
-    runner.run_daily_benchmark(target_date, demo_puzzle_adapters(), DEMO_MODELS)
+    runner = BenchmarkRunner(LocalFixtureSandboxProvider(), progress_callback=_print_progress)
+    results = runner.run_daily_benchmark(target_date, demo_puzzle_adapters(), DEMO_MODELS)
+    _print_results(results)
 
 
 def run_live_wordle(target_date: date) -> None:
     init_db()
-    runner = BenchmarkRunner(LocalPlaywrightSandboxProvider())
-    runner.run_daily_benchmark(target_date, default_puzzle_adapters(), LIVE_MODELS)
+    runner = BenchmarkRunner(LocalPlaywrightSandboxProvider(), progress_callback=_print_progress)
+    results = runner.run_daily_benchmark(target_date, default_puzzle_adapters(), LIVE_MODELS)
+    _print_results(results)
 
 
 def run_live_wordle_openai(target_date: date) -> None:
     init_db()
-    runner = BenchmarkRunner(LocalPlaywrightSandboxProvider())
-    runner.run_daily_benchmark(target_date, default_puzzle_adapters(), [OpenAIWordleModelAdapter()])
+    runner = BenchmarkRunner(LocalPlaywrightSandboxProvider(), progress_callback=_print_progress)
+    results = runner.run_daily_benchmark(target_date, default_puzzle_adapters(), [OpenAIWordleModelAdapter()])
+    _print_results(results)
+
+
+def run_live_wordle_openai_agentic() -> None:
+    result = run_agentic_wordle_openai(progress_callback=_print_agentic_progress)
+    print(
+        f"Completed agentic browser run: model={result.model_id} turns={result.turn_count} "
+        f"final_url={result.final_url}"
+    )
+    if result.final_text:
+        print(f"Final summary: {result.final_text}")
+    print(f"Artifacts: {result.artifact_dir}")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,7 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args:
         print(
             "Usage: python -m app.cli "
-            "<seed-demo|run-daily-benchmark|run-live-wordle|run-live-wordle-openai|fetch-daily-puzzles|recompute-leaderboard> [YYYY-MM-DD]"
+            "<seed-demo|run-daily-benchmark|run-live-wordle|run-live-wordle-openai|run-live-wordle-openai-agentic|fetch-daily-puzzles|recompute-leaderboard> [YYYY-MM-DD]"
         )
         return 1
 
@@ -84,6 +194,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if command == "run-live-wordle-openai":
         run_live_wordle_openai(target_date)
+        return 0
+    if command == "run-live-wordle-openai-agentic":
+        run_live_wordle_openai_agentic()
         return 0
     if command == "fetch-daily-puzzles":
         BenchmarkRunner(LocalFixtureSandboxProvider()).fetch_daily_puzzles(demo_puzzle_adapters(), target_date)

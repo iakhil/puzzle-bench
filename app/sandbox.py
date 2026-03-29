@@ -74,6 +74,8 @@ class LocalFixtureSandboxSession(SandboxSession):
 class LocalPlaywrightSandboxProvider(SandboxProvider):
     def __init__(self, headless: bool | None = None) -> None:
         self.headless = headless if headless is not None else os.getenv("GAME_BENCH_HEADLESS", "1") != "0"
+        default_keep_open_seconds = "10" if not self.headless else "0"
+        self.keep_open_seconds = float(os.getenv("GAME_BENCH_KEEP_OPEN_SECONDS", default_keep_open_seconds))
 
     @property
     def provider_name(self) -> str:
@@ -90,6 +92,7 @@ class LocalPlaywrightSandboxProvider(SandboxProvider):
             browser=browser,
             page=page,
             state={},
+            keep_open_seconds=self.keep_open_seconds,
         )
 
 
@@ -119,6 +122,7 @@ class PlaywrightSandboxSession(SandboxSession):
     browser: Browser
     page: Page
     state: dict[str, object]
+    keep_open_seconds: float = 0.0
 
     def navigate(self, url: str) -> None:
         self.page.goto(url, wait_until="domcontentloaded", timeout=60000)
@@ -174,6 +178,8 @@ class PlaywrightSandboxSession(SandboxSession):
         }
 
     def close(self) -> None:
+        if self.keep_open_seconds > 0:
+            self.page.wait_for_timeout(int(self.keep_open_seconds * 1000))
         self.browser.close()
         self.playwright.stop()
 
