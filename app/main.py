@@ -9,9 +9,17 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from .config import get_settings
-from .db import init_db
-from .repository import fetch_leaderboard_rows, fetch_recent_runs, fetch_run_detail
+try:
+    from .config import get_settings
+    from .db import init_db
+    from .repository import fetch_leaderboard_rows, fetch_recent_runs, fetch_run_detail
+except ImportError:  # pragma: no cover - direct script execution fallback
+    import sys
+
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+    from app.config import get_settings
+    from app.db import init_db
+    from app.repository import fetch_leaderboard_rows, fetch_recent_runs, fetch_run_detail
 
 
 settings = get_settings()
@@ -92,3 +100,9 @@ def run_detail_api(run_id: str) -> JSONResponse:
         "artifacts": [dict(row) for row in detail["artifacts"]],
     }
     return JSONResponse(payload)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=False)

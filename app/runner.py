@@ -102,10 +102,7 @@ class BenchmarkRunner:
         time_start = time.perf_counter()
         try:
             for step_index in range(budget.max_steps):
-                observation = session.observe(
-                    instructions=puzzle_adapter.instructions(puzzle),
-                    remaining_steps=budget.max_steps - step_index,
-                )
+                observation = puzzle_adapter.observe(session, puzzle, budget.max_steps - step_index)
                 decision = model_adapter.next_action(observation, run_state)
                 self._apply_action(session, decision.action.kind, decision.action.payload)
                 if decision.action.kind == "submit_answer":
@@ -166,6 +163,14 @@ class BenchmarkRunner:
             session.scroll(int(payload["amount"]))
         elif kind == "navigate":
             session.navigate(str(payload["url"]))
+        elif kind == "submit_guess":
+            guess = str(payload["guess"]).strip().lower()
+            if len(guess) != 5 or not guess.isalpha():
+                raise ValueError(f"Invalid Wordle guess: {guess}")
+            for ch in guess:
+                session.click(f'button[data-key="{ch}"]')
+            session.click('button[data-key="↵"]')
+            time.sleep(4.5)
         elif kind in {"submit_answer", "finish"}:
             return None
         else:

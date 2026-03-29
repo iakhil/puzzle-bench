@@ -19,7 +19,7 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Seed demo data:
+Seed fixture/demo data:
 
 ```bash
 python3 -m app.cli seed-demo
@@ -27,11 +27,26 @@ python3 -m app.cli seed-demo
 
 Then open `http://127.0.0.1:8000`.
 
+Run the live NYT Wordle benchmark in a real browser:
+
+```bash
+python3 -m app.cli run-live-wordle
+```
+
+Run Wordle with a real OpenAI model decision loop:
+
+```bash
+export OPENAI_API_KEY=...
+python3 -m app.cli run-live-wordle-openai
+```
+
 ## Commands
 
 ```bash
 python3 -m app.cli seed-demo
 python3 -m app.cli run-daily-benchmark
+python3 -m app.cli run-live-wordle
+python3 -m app.cli run-live-wordle-openai
 python3 -m app.cli fetch-daily-puzzles
 python3 -m app.cli recompute-leaderboard
 ```

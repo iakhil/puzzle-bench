@@ -5,10 +5,10 @@ import unittest
 
 from app.db import init_db, reset_db
 from app.model_adapters import ScriptedModelAdapter
-from app.puzzle_adapters import WordleAdapter
+from app.puzzle_adapters import FixtureWordleAdapter
 from app.repository import fetch_leaderboard_rows, fetch_recent_runs
 from app.runner import BenchmarkRunner
-from app.sandbox import LocalPlaywrightSandboxProvider
+from app.sandbox import LocalFixtureSandboxProvider
 
 
 class RunnerTests(unittest.TestCase):
@@ -17,10 +17,10 @@ class RunnerTests(unittest.TestCase):
         init_db()
 
     def test_daily_benchmark_creates_leaderboard(self) -> None:
-        runner = BenchmarkRunner(LocalPlaywrightSandboxProvider())
+        runner = BenchmarkRunner(LocalFixtureSandboxProvider())
         results = runner.run_daily_benchmark(
             target_date=date(2026, 3, 27),
-            puzzle_adapters=[WordleAdapter()],
+            puzzle_adapters=[FixtureWordleAdapter()],
             model_adapters=[ScriptedModelAdapter(provider="openai", model_id="gpt-4.1-mini")],
         )
 

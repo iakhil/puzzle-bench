@@ -30,6 +30,7 @@ class Observation:
     screenshot_path: str | None
     instructions: str
     remaining_steps: int
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -90,6 +91,10 @@ class SandboxSession(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def evaluate(self, script: str) -> Any:
+        raise NotImplementedError
+
+    @abstractmethod
     def observe(self, instructions: str, remaining_steps: int) -> Observation:
         raise NotImplementedError
 
@@ -127,6 +132,10 @@ class PuzzleAdapter(ABC):
 
     @abstractmethod
     def instructions(self, puzzle: PuzzleInstance) -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    def observe(self, session: SandboxSession, puzzle: PuzzleInstance, remaining_steps: int) -> Observation:
         raise NotImplementedError
 
     @abstractmethod
