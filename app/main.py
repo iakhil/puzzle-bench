@@ -130,7 +130,7 @@ def browserbase_replay_page(request: Request, session_id: str) -> HTMLResponse:
     )
 
 
-@app.get("/replays/browserbase/{session_id}.json", response_class=JSONResponse)
+@app.get("/replays/browserbase/{session_id}/events", response_class=JSONResponse)
 def browserbase_replay_json(session_id: str) -> JSONResponse:
     if not settings.browserbase_api_key:
         raise HTTPException(status_code=503, detail="Browserbase API key is not configured")

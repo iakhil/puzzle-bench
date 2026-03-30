@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Replay {{ session_id }}</title>
+    <title>Replay</title>
     <link rel="stylesheet" href="/static/styles.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/style.css" />
     <style>
@@ -20,14 +20,14 @@
     <main class="page">
       <section class="hero compact">
         <p class="eyebrow">Browser Replay</p>
-        <h1>Browserbase Session {{ session_id }}</h1>
+        <h1>Agent Replay</h1>
         <p class="lede">Replay this run directly in the app.</p>
       </section>
 
       <section class="panel replay-shell">
         <div class="panel-header">
           <h2>Replay</h2>
-          <a href="/replays/browserbase/{{ session_id }}.json">JSON</a>
+          <a href="/replays/browserbase/{{ session_id }}/events">JSON</a>
         </div>
         <div id="status">Loading replay…</div>
         <div id="player"></div>
@@ -40,7 +40,7 @@
         const status = document.getElementById("status");
         const playerRoot = document.getElementById("player");
         try {
-          const response = await fetch(`/replays/browserbase/{{ session_id }}.json`);
+          const response = await fetch(`/replays/browserbase/{{ session_id }}/events`);
           if (!response.ok) {
             throw new Error(`Replay request failed with ${response.status}`);
           }
