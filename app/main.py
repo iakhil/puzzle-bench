@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 try:
-    from .agentic_browser import run_agentic_wordle_openai
+    from .agentic_browser import run_agentic_wordle
     from .config import get_settings
     from .db import init_db
     from .repository import fetch_leaderboard_rows, fetch_recent_runs, fetch_run_detail
@@ -23,7 +23,7 @@ except ImportError:  # pragma: no cover - direct script execution fallback
     import sys
 
     sys.path.append(str(Path(__file__).resolve().parent.parent))
-    from app.agentic_browser import run_agentic_wordle_openai
+    from app.agentic_browser import run_agentic_wordle
     from app.config import get_settings
     from app.db import init_db
     from app.repository import fetch_leaderboard_rows, fetch_recent_runs, fetch_run_detail
@@ -168,15 +168,29 @@ def trigger_wordle_agentic_run(
         requested_date = datetime.fromisoformat(str(payload["target_date"])).date()
     else:
         requested_date = datetime.now(timezone.utc).date()
+    requested_provider = str(payload.get("provider", "openai")) if payload else "openai"
+    requested_model_id = str(payload["model_id"]) if payload and payload.get("model_id") else None
 
     def _run() -> None:
         try:
-            result = run_agentic_wordle_openai(target_date=requested_date)
-            app.state.agentic_active_run = {"run_id": result.run_id, "status": result.solve_status, "completed": True}
+            result = run_agentic_wordle(
+                provider=requested_provider,
+                model_id=requested_model_id,
+                target_date=requested_date,
+            )
+            app.state.agentic_active_run = {
+                "run_id": result.run_id,
+                "status": result.solve_status,
+                "provider": result.provider,
+                "model_id": result.model_id,
+                "completed": True,
+            }
         except Exception as exc:
             app.state.agentic_active_run = {
                 "run_id": run_preview_id,
                 "status": "failed",
+                "provider": requested_provider,
+                "model_id": requested_model_id,
                 "error": str(exc),
                 "target_date": requested_date.isoformat(),
             }
@@ -184,7 +198,13 @@ def trigger_wordle_agentic_run(
             agentic_run_lock.release()
 
     run_preview_id = f"queued-{requested_date.isoformat()}"
-    app.state.agentic_active_run = {"run_id": run_preview_id, "status": "running", "target_date": requested_date.isoformat()}
+    app.state.agentic_active_run = {
+        "run_id": run_preview_id,
+        "status": "running",
+        "provider": requested_provider,
+        "model_id": requested_model_id,
+        "target_date": requested_date.isoformat(),
+    }
     threading.Thread(target=_run, daemon=True).start()
     return JSONResponse({"queued": True, "target_date": requested_date.isoformat(), "run": app.state.agentic_active_run})
 

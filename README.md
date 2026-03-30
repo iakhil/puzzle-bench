@@ -56,6 +56,22 @@ export GAME_BENCH_AGENTIC_KEEP_OPEN_SECONDS=20
 python3 -m app.cli run-live-wordle-openai-agentic
 ```
 
+Run the same agentic browser-use path with Claude computer use:
+
+```bash
+export ANTHROPIC_API_KEY=...
+export GAME_BENCH_AGENTIC_HEADLESS=0
+export GAME_BENCH_AGENTIC_KEEP_OPEN_SECONDS=20
+python3 -m app.cli run-live-wordle-claude-agentic
+```
+
+Or use the generic provider-based entrypoint:
+
+```bash
+python3 -m app.cli run-live-wordle-agentic anthropic
+python3 -m app.cli run-live-wordle-agentic openai
+```
+
 Trigger the agentic run through the internal admin endpoint:
 
 ```bash
@@ -63,7 +79,7 @@ export GAME_BENCH_ADMIN_TOKEN=...
 curl -X POST http://127.0.0.1:8000/internal/runs/wordle-agentic \
   -H "Authorization: Bearer $GAME_BENCH_ADMIN_TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"target_date":"2026-03-29"}'
+  -d '{"target_date":"2026-03-29","provider":"anthropic","model_id":"claude-sonnet-4-20250514"}'
 ```
 
 ## Commands
@@ -74,6 +90,8 @@ python3 -m app.cli run-daily-benchmark
 python3 -m app.cli run-live-wordle
 python3 -m app.cli run-live-wordle-openai
 python3 -m app.cli run-live-wordle-openai-agentic
+python3 -m app.cli run-live-wordle-claude-agentic
+python3 -m app.cli run-live-wordle-agentic anthropic
 python3 -m app.cli fetch-daily-puzzles
 python3 -m app.cli recompute-leaderboard
 ```
@@ -92,6 +110,8 @@ python3 -m app.cli recompute-leaderboard
 - `GAME_BENCH_AGENTIC_KEEP_OPEN_SECONDS`: How long the separate agentic browser stays open after the run ends. Defaults to `15` when headed
 - `GAME_BENCH_AGENTIC_MAX_TURNS`: Max computer-use turns before the separate agentic run aborts. Defaults to `30`
 - `OPENAI_COMPUTER_MODEL`: OpenAI model for the separate agentic browser-use path. Defaults to `gpt-5.4`
+- `ANTHROPIC_API_KEY`: Anthropic API key for Claude computer use
+- `ANTHROPIC_COMPUTER_MODEL`: Anthropic model for the separate agentic browser-use path. Defaults to `claude-sonnet-4-20250514`
 - `BROWSERBASE_API_KEY`: Optional Browserbase API key
 - `BROWSERBASE_PROJECT_ID`: Optional Browserbase project id
 - `BROWSERBASE_REGION`: Browserbase region for remote sessions. Defaults to `us-west-2`

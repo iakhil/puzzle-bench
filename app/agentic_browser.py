@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
-import hashlib
-from pathlib import Path
 import base64
+import hashlib
 import json
+import math
 import os
+from pathlib import Path
 import time
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
@@ -18,11 +19,26 @@ from playwright.sync_api import Browser, Page, Playwright, sync_playwright
 
 from .config import get_settings
 from .domain import Observation, PuzzleInstance, ScoredAttempt
-from .repository import add_artifact, add_attempt_step, insert_run, mark_run_failed, recompute_daily_leaderboard, update_run_result, upsert_puzzle_instance
+from .repository import (
+    add_artifact,
+    add_attempt_step,
+    insert_run,
+    mark_run_failed,
+    recompute_daily_leaderboard,
+    update_run_result,
+    upsert_puzzle_instance,
+)
 from .sandbox import _browserbase_replay_url, _create_browserbase_session
 
 
 DEFAULT_WORDLE_URL = "https://www.nytimes.com/games/wordle/index.html"
+DEFAULT_VIEWPORT_WIDTH = 1440
+DEFAULT_VIEWPORT_HEIGHT = 1200
+DEFAULT_OPENAI_COMPUTER_MODEL = "gpt-5.4"
+DEFAULT_ANTHROPIC_COMPUTER_MODEL = "claude-sonnet-4-20250514"
+ANTHROPIC_API_VERSION = "2023-06-01"
+ANTHROPIC_COMPUTER_BETA = "computer-use-2025-01-24"
+ANTHROPIC_COMPUTER_TOOL_TYPE = "computer_20250124"
 
 
 @dataclass(frozen=True)
@@ -47,6 +63,8 @@ class PlaywrightComputerHarness:
         headless: bool | None = None,
         keep_open_seconds: float | None = None,
         progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        viewport_width: int = DEFAULT_VIEWPORT_WIDTH,
+        viewport_height: int = DEFAULT_VIEWPORT_HEIGHT,
     ) -> None:
         self.run_id = run_id
         self.start_url = start_url
@@ -67,15 +85,16 @@ class PlaywrightComputerHarness:
         self.context = None
         self.page: Page | None = None
         self.video = None
-        self.context = None
+        self.viewport_width = viewport_width
+        self.viewport_height = viewport_height
 
     def start(self) -> None:
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(headless=self.headless)
         self.context = self.browser.new_context(
-            viewport={"width": 1440, "height": 1200},
+            viewport={"width": self.viewport_width, "height": self.viewport_height},
             record_video_dir=str(self.artifact_dir),
-            record_video_size={"width": 1440, "height": 1200},
+            record_video_size={"width": self.viewport_width, "height": self.viewport_height},
         )
         self.page = self.context.new_page()
         self.video = self.page.video
@@ -89,50 +108,84 @@ class PlaywrightComputerHarness:
         image_bytes = page.screenshot(path=str(path), full_page=True)
         return str(path), base64.b64encode(image_bytes).decode("utf-8")
 
-    def execute_actions(self, actions: list[dict[str, Any]]) -> None:
+    def capture_tool_screenshot_base64(self) -> str:
+        image_bytes = self._page().screenshot(full_page=False)
+        return base64.b64encode(image_bytes).decode("utf-8")
+
+    def execute_actions(self, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         page = self._page()
+        results: list[dict[str, Any]] = []
         for action in actions:
             self._ensure_allowed_page(page)
             self._emit("computer_action", action=action, current_url=page.url)
-            self.apply_action(page, action)
+            result = self.apply_action(page, action)
+            results.append(result)
             if action.get("type") not in {"wait", "screenshot"}:
                 page.wait_for_timeout(700)
+        return results
 
     @staticmethod
-    def apply_action(page: Any, action: dict[str, Any]) -> None:
+    def apply_action(page: Any, action: dict[str, Any]) -> dict[str, Any]:
         action_type = str(action.get("type"))
         if action_type == "click":
             page.mouse.click(action["x"], action["y"], button=action.get("button", "left"))
-            return
+            return {"type": "text", "text": "OK"}
         if action_type == "double_click":
             page.mouse.dblclick(action["x"], action["y"], button=action.get("button", "left"))
-            return
+            return {"type": "text", "text": "OK"}
+        if action_type == "triple_click":
+            page.mouse.click(action["x"], action["y"], button=action.get("button", "left"), click_count=3)
+            return {"type": "text", "text": "OK"}
         if action_type == "scroll":
             page.mouse.move(action.get("x", 0), action.get("y", 0))
-            page.mouse.wheel(action.get("scroll_x", action.get("scrollX", 0)), action.get("scroll_y", action.get("scrollY", 0)))
-            return
+            page.mouse.wheel(
+                action.get("scroll_x", action.get("scrollX", 0)),
+                action.get("scroll_y", action.get("scrollY", 0)),
+            )
+            return {"type": "text", "text": "OK"}
         if action_type == "keypress":
             for key in action.get("keys", []):
                 page.keyboard.press(_normalize_key(str(key)))
-            return
+            return {"type": "text", "text": "OK"}
+        if action_type == "keypress_combo":
+            page.keyboard.press(_normalize_key_combo(str(action.get("combo", ""))))
+            return {"type": "text", "text": "OK"}
         if action_type == "type":
             page.keyboard.type(action.get("text", ""))
-            return
+            return {"type": "text", "text": "OK"}
         if action_type == "wait":
-            time.sleep(2)
-            return
+            time.sleep(float(action.get("seconds", 2)))
+            return {"type": "text", "text": "OK"}
         if action_type == "move":
             page.mouse.move(action["x"], action["y"])
-            return
+            return {"type": "text", "text": "OK"}
         if action_type == "drag":
             page.mouse.move(action["path"][0]["x"], action["path"][0]["y"])
-            page.mouse.down()
+            page.mouse.down(button=action.get("button", "left"))
             for point in action["path"][1:]:
                 page.mouse.move(point["x"], point["y"])
-            page.mouse.up()
-            return
+            page.mouse.up(button=action.get("button", "left"))
+            return {"type": "text", "text": "OK"}
+        if action_type == "mouse_down":
+            page.mouse.down(button=action.get("button", "left"))
+            return {"type": "text", "text": "OK"}
+        if action_type == "mouse_up":
+            page.mouse.up(button=action.get("button", "left"))
+            return {"type": "text", "text": "OK"}
+        if action_type == "hold_key":
+            key = _normalize_key(str(action.get("key", "")))
+            duration = float(action.get("duration_seconds", action.get("duration", 1.0)))
+            page.keyboard.down(key)
+            time.sleep(duration)
+            page.keyboard.up(key)
+            return {"type": "text", "text": "OK"}
         if action_type == "screenshot":
-            return
+            image_bytes = page.screenshot(full_page=False)
+            return {
+                "type": "image",
+                "data": base64.b64encode(image_bytes).decode("utf-8"),
+                "media_type": "image/png",
+            }
         raise ValueError(f"Unsupported computer action: {action_type}")
 
     def current_url(self) -> str:
@@ -180,8 +233,18 @@ class BrowserbaseComputerHarness(PlaywrightComputerHarness):
         run_id: str,
         start_url: str,
         progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+        viewport_width: int = DEFAULT_VIEWPORT_WIDTH,
+        viewport_height: int = DEFAULT_VIEWPORT_HEIGHT,
     ) -> None:
-        super().__init__(run_id=run_id, start_url=start_url, headless=True, keep_open_seconds=0, progress_callback=progress_callback)
+        super().__init__(
+            run_id=run_id,
+            start_url=start_url,
+            headless=True,
+            keep_open_seconds=0,
+            progress_callback=progress_callback,
+            viewport_width=viewport_width,
+            viewport_height=viewport_height,
+        )
         settings = get_settings()
         if not settings.browserbase_api_key or not settings.browserbase_project_id:
             raise RuntimeError("Browserbase credentials are not configured.")
@@ -200,8 +263,13 @@ class BrowserbaseComputerHarness(PlaywrightComputerHarness):
         self.session_id = str(session["id"])
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.connect_over_cdp(str(session["connectUrl"]))
-        self.context = self.browser.contexts[0] if self.browser.contexts else self.browser.new_context(viewport={"width": 1440, "height": 1200})
+        self.context = (
+            self.browser.contexts[0]
+            if self.browser.contexts
+            else self.browser.new_context(viewport={"width": self.viewport_width, "height": self.viewport_height})
+        )
         self.page = self.context.pages[0] if self.context.pages else self.context.new_page()
+        self.page.set_viewport_size({"width": self.viewport_width, "height": self.viewport_height})
         self.page.goto(self.start_url, wait_until="domcontentloaded", timeout=60000)
         self.page.wait_for_timeout(1500)
         self._emit(
@@ -223,14 +291,17 @@ class BrowserbaseComputerHarness(PlaywrightComputerHarness):
 
 
 class OpenAIComputerUseClient:
+    provider = "openai"
+    response_artifact_type = "openai_response"
+
     def __init__(self, model_id: str | None = None) -> None:
-        self.model_id = model_id or os.getenv("OPENAI_COMPUTER_MODEL", "gpt-5.4")
+        self.model_id = model_id or os.getenv("OPENAI_COMPUTER_MODEL", DEFAULT_OPENAI_COMPUTER_MODEL)
         self.api_key = os.getenv("OPENAI_API_KEY")
         self.api_base = os.getenv("OPENAI_RESPONSES_API_BASE", "https://api.openai.com/v1/responses")
         if not self.api_key:
             raise RuntimeError("OPENAI_API_KEY is not set.")
 
-    def create_initial_response(self, prompt: str) -> dict[str, Any]:
+    def create_initial_response(self, prompt: str, screenshot_base64: str | None = None) -> dict[str, Any]:
         return self._request(
             {
                 "model": self.model_id,
@@ -240,21 +311,32 @@ class OpenAIComputerUseClient:
             }
         )
 
-    def continue_with_screenshot(
+    def extract_pending_call(self, response: dict[str, Any]) -> dict[str, Any] | None:
+        computer_call = extract_computer_call(response)
+        if computer_call is None:
+            return None
+        return {
+            "call_id": computer_call["call_id"],
+            "actions": list(computer_call.get("actions", [])),
+            "pending_safety_checks": list(computer_call.get("pending_safety_checks") or []),
+        }
+
+    def continue_after_actions(
         self,
-        previous_response_id: str,
-        call_id: str,
+        response: dict[str, Any],
+        pending_call: dict[str, Any],
+        action_results: list[dict[str, Any]],
         screenshot_base64: str,
     ) -> dict[str, Any]:
         return self._request(
             {
                 "model": self.model_id,
                 "tools": [{"type": "computer"}],
-                "previous_response_id": previous_response_id,
+                "previous_response_id": response["id"],
                 "input": [
                     {
                         "type": "computer_call_output",
-                        "call_id": call_id,
+                        "call_id": pending_call["call_id"],
                         "output": {
                             "type": "computer_screenshot",
                             "image_url": f"data:image/png;base64,{screenshot_base64}",
@@ -285,23 +367,143 @@ class OpenAIComputerUseClient:
             raise RuntimeError(f"OpenAI API request failed: {exc.reason}") from exc
 
 
-def run_agentic_wordle_openai(
+class AnthropicComputerUseClient:
+    provider = "anthropic"
+    response_artifact_type = "anthropic_response"
+
+    def __init__(self, model_id: str | None = None, display_width_px: int = 1024, display_height_px: int = 768) -> None:
+        self.model_id = model_id or os.getenv("ANTHROPIC_COMPUTER_MODEL", DEFAULT_ANTHROPIC_COMPUTER_MODEL)
+        self.api_key = os.getenv("ANTHROPIC_API_KEY")
+        self.api_base = os.getenv("ANTHROPIC_MESSAGES_API_BASE", "https://api.anthropic.com/v1/messages")
+        self.display_width_px = display_width_px
+        self.display_height_px = display_height_px
+        self.messages: list[dict[str, Any]] = []
+        if not self.api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is not set.")
+
+    def create_initial_response(self, prompt: str, screenshot_base64: str | None = None) -> dict[str, Any]:
+        content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
+        if screenshot_base64:
+            content.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/png",
+                        "data": screenshot_base64,
+                    },
+                }
+            )
+        self.messages = [{"role": "user", "content": content}]
+        return self._request()
+
+    def extract_pending_call(self, response: dict[str, Any]) -> dict[str, Any] | None:
+        tool_uses = extract_anthropic_tool_uses(response)
+        if not tool_uses:
+            return None
+        return {
+            "tool_uses": tool_uses,
+            "actions": [_normalize_anthropic_tool_use(tool_use.get("input", {})) for tool_use in tool_uses],
+        }
+
+    def continue_after_actions(
+        self,
+        response: dict[str, Any],
+        pending_call: dict[str, Any],
+        action_results: list[dict[str, Any]],
+        screenshot_base64: str,
+    ) -> dict[str, Any]:
+        self.messages.append({"role": "assistant", "content": response.get("content", [])})
+        tool_results: list[dict[str, Any]] = []
+        for tool_use, result in zip(pending_call["tool_uses"], action_results):
+            tool_result: dict[str, Any] = {
+                "type": "tool_result",
+                "tool_use_id": tool_use["id"],
+                "content": _anthropic_tool_result_content(result),
+            }
+            if result.get("is_error"):
+                tool_result["is_error"] = True
+            tool_results.append(tool_result)
+        self.messages.append({"role": "user", "content": tool_results})
+        return self._request()
+
+    def _request(self) -> dict[str, Any]:
+        payload = {
+            "model": self.model_id,
+            "max_tokens": 4096,
+            "tools": [
+                {
+                    "type": ANTHROPIC_COMPUTER_TOOL_TYPE,
+                    "name": "computer",
+                    "display_width_px": self.display_width_px,
+                    "display_height_px": self.display_height_px,
+                    "display_number": 1,
+                }
+            ],
+            "messages": self.messages,
+        }
+        request = Request(
+            self.api_base,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": self.api_key,
+                "anthropic-version": ANTHROPIC_API_VERSION,
+                "anthropic-beta": ANTHROPIC_COMPUTER_BETA,
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=120) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"Anthropic API request failed with status {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"Anthropic API request failed: {exc.reason}") from exc
+
+
+def run_agentic_wordle(
+    provider: str = "openai",
+    model_id: str | None = None,
     target_date: date | None = None,
     target_url: str = DEFAULT_WORDLE_URL,
     progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> AgenticRunResult:
     run_id = uuid.uuid4().hex
-    provider = "openai"
+    provider_name = provider.lower().strip()
     max_turns = int(os.getenv("GAME_BENCH_AGENTIC_MAX_TURNS", "30"))
     benchmark_date = target_date or datetime.now(timezone.utc).date()
+    viewport_width, viewport_height = (
+        _anthropic_display_dimensions(DEFAULT_VIEWPORT_WIDTH, DEFAULT_VIEWPORT_HEIGHT)
+        if provider_name == "anthropic"
+        else (DEFAULT_VIEWPORT_WIDTH, DEFAULT_VIEWPORT_HEIGHT)
+    )
     settings = get_settings()
     if settings.browser_provider == "browserbase":
-        harness = BrowserbaseComputerHarness(run_id=run_id, start_url=target_url, progress_callback=progress_callback)
+        harness = BrowserbaseComputerHarness(
+            run_id=run_id,
+            start_url=target_url,
+            progress_callback=progress_callback,
+            viewport_width=viewport_width,
+            viewport_height=viewport_height,
+        )
         sandbox_type = "browserbase-agentic"
     else:
-        harness = PlaywrightComputerHarness(run_id=run_id, start_url=target_url, progress_callback=progress_callback)
+        harness = PlaywrightComputerHarness(
+            run_id=run_id,
+            start_url=target_url,
+            progress_callback=progress_callback,
+            viewport_width=viewport_width,
+            viewport_height=viewport_height,
+        )
         sandbox_type = "local-playwright-agentic"
-    client = OpenAIComputerUseClient()
+    client = _build_computer_use_client(
+        provider_name,
+        model_id,
+        display_width_px=viewport_width,
+        display_height_px=viewport_height,
+    )
     puzzle = PuzzleInstance(
         puzzle_key="wordle",
         date=benchmark_date,
@@ -311,11 +513,13 @@ def run_agentic_wordle_openai(
     )
     puzzle_instance_id = upsert_puzzle_instance(puzzle)
     started_at = datetime.now(timezone.utc)
-    prompt_hash = hashlib.sha256(f"{client.model_id}:{target_url}:agentic-wordle".encode("utf-8")).hexdigest()
+    prompt_hash = hashlib.sha256(
+        f"{client.provider}:{client.model_id}:{target_url}:agentic-wordle".encode("utf-8")
+    ).hexdigest()
     insert_run(
         run_id=run_id,
         puzzle_instance_id=puzzle_instance_id,
-        provider=provider,
+        provider=client.provider,
         model_id=client.model_id,
         sandbox_type=sandbox_type,
         sandbox_session_id=run_id,
@@ -330,39 +534,37 @@ def run_agentic_wordle_openai(
     scored_attempt: ScoredAttempt | None = None
     video_path: str | None = None
     try:
-        screenshot_path, screenshot_base64 = harness.capture_screenshot("initial")
-        prompt = (
-            "You are controlling a browser that is already open to the New York Times Wordle page. "
-            "Use the computer tool to play the game yourself. Close modals if needed, observe tile feedback visually from screenshots, "
-            "and adapt each next guess accordingly. Prefer physical keyboard-style input for Wordle: use `keypress` actions for letters, "
-            "`ENTER`, and `BACKSPACE` instead of clicking the on-screen keyboard, because coordinate clicks on letter keys are brittle. "
-            "Only use mouse clicks to dismiss popovers, focus the game if typing does not work, or interact with non-keyboard UI. "
-            "Submit exactly one guess at a time: type five letters, press ENTER, then wait for the tile flip animation before deciding again. "
-            "Do not log in, subscribe, or leave the Wordle page. Stop when the puzzle is complete and then provide a short final summary "
-            "that states whether you solved it and in how many guesses. The current page URL is "
-            f"{target_url}. The first screenshot artifact is saved at {screenshot_path}."
-        )
+        screenshot_path, _ = harness.capture_screenshot("initial")
+        prompt = _build_agentic_prompt(target_url, screenshot_path)
         if progress_callback is not None:
             progress_callback(
                 "run_started",
-                {"run_id": run_id, "model_id": client.model_id, "artifact_dir": str(harness.artifact_dir), "sandbox_type": sandbox_type},
+                {
+                    "run_id": run_id,
+                    "provider": client.provider,
+                    "model_id": client.model_id,
+                    "artifact_dir": str(harness.artifact_dir),
+                    "sandbox_type": sandbox_type,
+                },
             )
-        response = client.create_initial_response(prompt)
+        response = client.create_initial_response(prompt, screenshot_base64=harness.capture_tool_screenshot_base64())
         response_path = _write_json_artifact(harness.artifact_dir, "response-initial", response)
-        add_artifact(run_id, "response", response_path, {"type": "openai_response"})
+        add_artifact(run_id, "response", response_path, {"type": client.response_artifact_type})
 
         while turn_count < max_turns:
             reasoning_summary = extract_reasoning_summary(response)
             if reasoning_summary and progress_callback is not None:
-                progress_callback("reasoning", {"turn_index": turn_count, "summary": reasoning_summary})
-            computer_call = extract_computer_call(response)
-            if computer_call is None:
+                progress_callback("reasoning", {"provider": client.provider, "turn_index": turn_count, "summary": reasoning_summary})
+
+            pending_call = client.extract_pending_call(response)
+            if pending_call is None:
                 final_text = extract_output_text(response)
                 if progress_callback is not None:
                     progress_callback(
                         "run_completed",
                         {
                             "run_id": run_id,
+                            "provider": client.provider,
                             "model_id": client.model_id,
                             "turn_count": turn_count,
                             "final_url": harness.current_url(),
@@ -372,35 +574,60 @@ def run_agentic_wordle_openai(
                     )
                 break
 
-            pending_safety_checks = computer_call.get("pending_safety_checks") or []
+            pending_safety_checks = pending_call.get("pending_safety_checks") or []
             if pending_safety_checks:
-                raise RuntimeError(f"OpenAI computer tool returned pending safety checks: {json.dumps(pending_safety_checks)}")
+                raise RuntimeError(
+                    f"OpenAI computer tool returned pending safety checks: {json.dumps(pending_safety_checks)}"
+                )
 
-            actions = list(computer_call.get("actions", []))
+            actions = list(pending_call.get("actions", []))
             if progress_callback is not None:
-                progress_callback("turn_started", {"turn_index": turn_count + 1, "actions": actions})
-            harness.execute_actions(actions)
-            screenshot_path, screenshot_base64 = harness.capture_screenshot(f"turn-{turn_count + 1}")
+                progress_callback(
+                    "turn_started",
+                    {"provider": client.provider, "turn_index": turn_count + 1, "actions": actions},
+                )
+            action_results = harness.execute_actions(actions)
+            screenshot_path, _ = harness.capture_screenshot(f"turn-{turn_count + 1}")
             observation = _capture_observation(harness._page(), screenshot_path, turn_count + 1, max_turns)
-            rationale = reasoning_summary or "Executing OpenAI computer-use actions."
+            rationale = reasoning_summary or f"Executing {client.provider} computer-use actions."
             add_attempt_step(
                 run_id=run_id,
                 step_index=turn_count,
                 action_kind="computer_actions",
-                action_payload={"actions": actions, "call_id": computer_call.get("call_id")},
+                action_payload={"actions": actions, "provider": client.provider},
                 rationale=rationale,
                 observation=observation,
                 artifacts={"screenshot_path": screenshot_path},
             )
-            add_artifact(run_id, "screenshot", screenshot_path, {"type": "observation_screenshot", "step_index": turn_count})
+            add_artifact(
+                run_id,
+                "screenshot",
+                screenshot_path,
+                {"type": "observation_screenshot", "step_index": turn_count},
+            )
             if progress_callback is not None:
                 progress_callback(
                     "screenshot_captured",
-                    {"turn_index": turn_count + 1, "screenshot_path": screenshot_path, "current_url": harness.current_url()},
+                    {
+                        "provider": client.provider,
+                        "turn_index": turn_count + 1,
+                        "screenshot_path": screenshot_path,
+                        "current_url": harness.current_url(),
+                    },
                 )
-            response = client.continue_with_screenshot(response["id"], computer_call["call_id"], screenshot_base64)
+            response = client.continue_after_actions(
+                response,
+                pending_call,
+                action_results,
+                screenshot_base64=harness.capture_tool_screenshot_base64(),
+            )
             response_path = _write_json_artifact(harness.artifact_dir, f"response-turn-{turn_count + 1}", response)
-            add_artifact(run_id, "response", response_path, {"type": "openai_response", "step_index": turn_count})
+            add_artifact(
+                run_id,
+                "response",
+                response_path,
+                {"type": client.response_artifact_type, "step_index": turn_count},
+            )
             turn_count += 1
         else:
             raise RuntimeError(f"Agentic run exceeded the configured turn limit ({max_turns}).")
@@ -414,7 +641,12 @@ def run_agentic_wordle_openai(
         trace_path = _write_json_artifact(
             harness.artifact_dir,
             "trace",
-            {"turn_count": turn_count, "final_text": final_text, "model_id": client.model_id},
+            {
+                "provider": client.provider,
+                "turn_count": turn_count,
+                "final_text": final_text,
+                "model_id": client.model_id,
+            },
         )
         add_artifact(run_id, "trace", trace_path, {"type": "agentic_trace"})
         update_run_result(
@@ -442,7 +674,7 @@ def run_agentic_wordle_openai(
     recompute_daily_leaderboard(benchmark_date)
     return AgenticRunResult(
         run_id=run_id,
-        provider=provider,
+        provider=client.provider,
         model_id=client.model_id,
         final_url=final_url,
         final_text=final_text,
@@ -454,6 +686,32 @@ def run_agentic_wordle_openai(
     )
 
 
+def run_agentic_wordle_openai(
+    target_date: date | None = None,
+    target_url: str = DEFAULT_WORDLE_URL,
+    progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+) -> AgenticRunResult:
+    return run_agentic_wordle(
+        provider="openai",
+        target_date=target_date,
+        target_url=target_url,
+        progress_callback=progress_callback,
+    )
+
+
+def run_agentic_wordle_anthropic(
+    target_date: date | None = None,
+    target_url: str = DEFAULT_WORDLE_URL,
+    progress_callback: Callable[[str, dict[str, Any]], None] | None = None,
+) -> AgenticRunResult:
+    return run_agentic_wordle(
+        provider="anthropic",
+        target_date=target_date,
+        target_url=target_url,
+        progress_callback=progress_callback,
+    )
+
+
 def extract_computer_call(response: dict[str, Any]) -> dict[str, Any] | None:
     for item in response.get("output", []):
         if item.get("type") == "computer_call":
@@ -461,15 +719,33 @@ def extract_computer_call(response: dict[str, Any]) -> dict[str, Any] | None:
     return None
 
 
+def extract_anthropic_tool_uses(response: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in response.get("content", [])
+        if item.get("type") == "tool_use" and item.get("name") == "computer"
+    ]
+
+
 def extract_reasoning_summary(response: dict[str, Any]) -> str:
-    parts: list[str] = []
-    for item in response.get("output", []):
-        if item.get("type") != "reasoning":
+    if "output" in response:
+        parts: list[str] = []
+        for item in response.get("output", []):
+            if item.get("type") != "reasoning":
+                continue
+            for summary_item in item.get("summary", []):
+                text = summary_item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        return " ".join(parts)
+
+    parts = []
+    for item in response.get("content", []):
+        if item.get("type") not in {"thinking", "redacted_thinking"}:
             continue
-        for summary_item in item.get("summary", []):
-            text = summary_item.get("text")
-            if isinstance(text, str) and text.strip():
-                parts.append(text.strip())
+        text = item.get("thinking") or item.get("text")
+        if isinstance(text, str) and text.strip():
+            parts.append(text.strip())
     return " ".join(parts)
 
 
@@ -477,14 +753,144 @@ def extract_output_text(response: dict[str, Any]) -> str:
     output_text = response.get("output_text")
     if isinstance(output_text, str) and output_text.strip():
         return output_text.strip()
-    for item in response.get("output", []):
-        if item.get("type") != "message":
+    if "output" in response:
+        for item in response.get("output", []):
+            if item.get("type") != "message":
+                continue
+            for content in item.get("content", []):
+                text = content.get("text")
+                if isinstance(text, str) and text.strip():
+                    return text.strip()
+        return ""
+
+    parts: list[str] = []
+    for item in response.get("content", []):
+        if item.get("type") != "text":
             continue
-        for content in item.get("content", []):
-            text = content.get("text")
-            if isinstance(text, str) and text.strip():
-                return text.strip()
-    return ""
+        text = item.get("text")
+        if isinstance(text, str) and text.strip():
+            parts.append(text.strip())
+    return "\n".join(parts).strip()
+
+
+def _build_computer_use_client(
+    provider: str,
+    model_id: str | None,
+    display_width_px: int,
+    display_height_px: int,
+) -> OpenAIComputerUseClient | AnthropicComputerUseClient:
+    normalized = provider.lower().strip()
+    if normalized == "openai":
+        return OpenAIComputerUseClient(model_id=model_id)
+    if normalized == "anthropic":
+        return AnthropicComputerUseClient(
+            model_id=model_id,
+            display_width_px=display_width_px,
+            display_height_px=display_height_px,
+        )
+    raise ValueError(f"Unsupported computer-use provider: {provider}")
+
+
+def _build_agentic_prompt(target_url: str, screenshot_path: str) -> str:
+    return (
+        "You are controlling a browser that is already open to the New York Times Wordle page. "
+        "Use the computer tool to play the game yourself. Close modals if needed, observe tile feedback visually from screenshots, "
+        "and adapt each next guess accordingly. Prefer physical keyboard-style input for Wordle: use keyboard actions for letters, "
+        "`ENTER`, and `BACKSPACE` instead of clicking the on-screen keyboard, because coordinate clicks on letter keys are brittle. "
+        "Only use mouse clicks to dismiss popovers, focus the game if typing does not work, or interact with non-keyboard UI. "
+        "Submit exactly one guess at a time: type five letters, press ENTER, then wait for the tile flip animation before deciding again. "
+        "Do not log in, subscribe, or leave the Wordle page. Stop when the puzzle is complete and then provide a short final summary "
+        "that states whether you solved it and in how many guesses. The current page URL is "
+        f"{target_url}. The first screenshot artifact is saved at {screenshot_path}."
+    )
+
+
+def _anthropic_display_dimensions(width: int, height: int) -> tuple[int, int]:
+    scale = min(1.0, 1568.0 / max(width, height), math.sqrt(1_150_000.0 / float(width * height)))
+    return max(1, int(width * scale)), max(1, int(height * scale))
+
+
+def _anthropic_tool_result_content(result: dict[str, Any]) -> list[dict[str, Any]]:
+    if result.get("type") == "image":
+        return [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": result.get("media_type", "image/png"),
+                    "data": result["data"],
+                },
+            }
+        ]
+    return [{"type": "text", "text": str(result.get("text", "OK"))}]
+
+
+def _normalize_anthropic_tool_use(tool_input: dict[str, Any]) -> dict[str, Any]:
+    action = str(tool_input.get("action", "")).strip().lower()
+    if action == "screenshot":
+        return {"type": "screenshot"}
+    if action in {"left_click", "right_click", "middle_click"}:
+        coordinate = tool_input.get("coordinate", [0, 0])
+        button = action.replace("_click", "")
+        return {"type": "click", "x": int(coordinate[0]), "y": int(coordinate[1]), "button": button}
+    if action == "double_click":
+        coordinate = tool_input.get("coordinate", [0, 0])
+        return {"type": "double_click", "x": int(coordinate[0]), "y": int(coordinate[1]), "button": "left"}
+    if action == "triple_click":
+        coordinate = tool_input.get("coordinate", [0, 0])
+        return {"type": "triple_click", "x": int(coordinate[0]), "y": int(coordinate[1]), "button": "left"}
+    if action == "mouse_move":
+        coordinate = tool_input.get("coordinate", [0, 0])
+        return {"type": "move", "x": int(coordinate[0]), "y": int(coordinate[1])}
+    if action == "type":
+        return {"type": "type", "text": str(tool_input.get("text", ""))}
+    if action == "key":
+        return {"type": "keypress_combo", "combo": str(tool_input.get("text", ""))}
+    if action == "hold_key":
+        return {
+            "type": "hold_key",
+            "key": str(tool_input.get("text", "")),
+            "duration_seconds": float(tool_input.get("duration", tool_input.get("duration_seconds", 1.0))),
+        }
+    if action == "scroll":
+        amount = int(tool_input.get("scroll_amount", tool_input.get("amount", 0)))
+        direction = str(tool_input.get("scroll_direction", tool_input.get("direction", "down"))).lower()
+        coordinate = tool_input.get("coordinate", [0, 0])
+        scroll_x = 0
+        scroll_y = 0
+        if direction == "up":
+            scroll_y = -amount
+        elif direction == "down":
+            scroll_y = amount
+        elif direction == "left":
+            scroll_x = -amount
+        elif direction == "right":
+            scroll_x = amount
+        return {
+            "type": "scroll",
+            "x": int(coordinate[0]),
+            "y": int(coordinate[1]),
+            "scroll_x": scroll_x,
+            "scroll_y": scroll_y,
+        }
+    if action == "left_click_drag":
+        start = tool_input.get("start_coordinate", tool_input.get("coordinate", [0, 0]))
+        end = tool_input.get("end_coordinate", tool_input.get("destination_coordinate", start))
+        return {
+            "type": "drag",
+            "button": "left",
+            "path": [
+                {"x": int(start[0]), "y": int(start[1])},
+                {"x": int(end[0]), "y": int(end[1])},
+            ],
+        }
+    if action == "left_mouse_down":
+        return {"type": "mouse_down", "button": "left"}
+    if action == "left_mouse_up":
+        return {"type": "mouse_up", "button": "left"}
+    if action == "wait":
+        return {"type": "wait", "seconds": float(tool_input.get("duration", tool_input.get("seconds", 1.0)))}
+    raise ValueError(f"Unsupported Anthropic computer-use action: {action}")
 
 
 def _write_json_artifact(artifact_dir: Path, stem: str, payload: dict[str, Any]) -> str:
@@ -585,5 +991,19 @@ def _normalize_key(key: str) -> str:
         "DOWN": "ArrowDown",
         "LEFT": "ArrowLeft",
         "RIGHT": "ArrowRight",
+        "CTRL": "Control",
+        "CONTROL": "Control",
+        "CMD": "Meta",
+        "COMMAND": "Meta",
+        "ALT": "Alt",
+        "OPTION": "Alt",
+        "SHIFT": "Shift",
     }
     return aliases.get(normalized.upper(), normalized)
+
+
+def _normalize_key_combo(combo: str) -> str:
+    parts = [part.strip() for part in combo.split("+") if part.strip()]
+    if not parts:
+        return combo
+    return "+".join(_normalize_key(part) for part in parts)

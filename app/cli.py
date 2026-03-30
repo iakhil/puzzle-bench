@@ -5,7 +5,7 @@ import os
 import sys
 
 try:
-    from .agentic_browser import run_agentic_wordle_openai
+    from .agentic_browser import run_agentic_wordle, run_agentic_wordle_anthropic, run_agentic_wordle_openai
     from .db import init_db
     from .model_adapters import OpenAIWordleModelAdapter
     from .model_adapters import ScriptedModelAdapter
@@ -18,7 +18,7 @@ except ImportError:  # pragma: no cover - direct script execution fallback
     from pathlib import Path
 
     sys.path.append(str(Path(__file__).resolve().parent.parent))
-    from app.agentic_browser import run_agentic_wordle_openai
+    from app.agentic_browser import run_agentic_wordle, run_agentic_wordle_anthropic, run_agentic_wordle_openai
     from app.db import init_db
     from app.model_adapters import OpenAIWordleModelAdapter
     from app.model_adapters import ScriptedModelAdapter
@@ -80,9 +80,10 @@ def _print_progress(event: str, payload: dict[str, object]) -> None:
 
 
 def _print_agentic_progress(event: str, payload: dict[str, object]) -> None:
+    provider = payload.get("provider")
     if event == "run_started":
         print(
-            f"[start] openai/{payload.get('model_id')} agentic browser run "
+            f"[start] {provider}/{payload.get('model_id')} agentic browser run "
             f"(run_id={payload.get('run_id')})"
         )
         print(f"  sandbox: {payload.get('sandbox_type')}")
@@ -114,7 +115,7 @@ def _print_agentic_progress(event: str, payload: dict[str, object]) -> None:
         return
     if event == "run_completed":
         print(
-            f"[done] openai/{payload.get('model_id')} final_url={payload.get('final_url')} "
+            f"[done] {provider}/{payload.get('model_id')} final_url={payload.get('final_url')} "
             f"turns={payload.get('turn_count')}"
         )
         final_text = str(payload.get("final_text", "")).strip()
@@ -184,35 +185,86 @@ def run_live_wordle_openai_agentic(target_date: date) -> None:
     print(f"Artifacts: {result.artifact_dir}")
 
 
+def run_live_wordle_anthropic_agentic(target_date: date) -> None:
+    init_db()
+    result = run_agentic_wordle_anthropic(target_date=target_date, progress_callback=_print_agentic_progress)
+    print(
+        f"Completed agentic browser run: provider={result.provider} model={result.model_id} "
+        f"status={result.solve_status} score={result.normalized_score:.1f} "
+        f"turns={result.turn_count} final_url={result.final_url}"
+    )
+    if result.final_text:
+        print(f"Final summary: {result.final_text}")
+    print(f"Run detail: /runs/{result.run_id}")
+    if result.video_path:
+        print(f"Video: {result.video_path}")
+    print(f"Artifacts: {result.artifact_dir}")
+
+
+def run_live_wordle_agentic(target_date: date, provider: str = "openai", model_id: str | None = None) -> None:
+    init_db()
+    result = run_agentic_wordle(
+        provider=provider,
+        model_id=model_id,
+        target_date=target_date,
+        progress_callback=_print_agentic_progress,
+    )
+    print(
+        f"Completed agentic browser run: provider={result.provider} model={result.model_id} "
+        f"status={result.solve_status} score={result.normalized_score:.1f} "
+        f"turns={result.turn_count} final_url={result.final_url}"
+    )
+    if result.final_text:
+        print(f"Final summary: {result.final_text}")
+    print(f"Run detail: /runs/{result.run_id}")
+    if result.video_path:
+        print(f"Video: {result.video_path}")
+    print(f"Artifacts: {result.artifact_dir}")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = list(argv or sys.argv[1:])
     if not args:
         print(
             "Usage: python -m app.cli "
-            "<seed-demo|run-daily-benchmark|run-live-wordle|run-live-wordle-openai|run-live-wordle-openai-agentic|fetch-daily-puzzles|recompute-leaderboard> [YYYY-MM-DD]"
+            "<seed-demo|run-daily-benchmark|run-live-wordle|run-live-wordle-openai|run-live-wordle-openai-agentic|run-live-wordle-claude-agentic|run-live-wordle-agentic|fetch-daily-puzzles|recompute-leaderboard> [provider] [YYYY-MM-DD]"
         )
         return 1
 
     command = args.pop(0)
-    target_date = _target_date_from_args(args)
     init_db()
 
     if command == "seed-demo":
+        target_date = _target_date_from_args(args)
         seed_demo(target_date)
         return 0
     if command in {"run-daily-benchmark", "run-live-wordle"}:
+        target_date = _target_date_from_args(args)
         run_live_wordle(target_date)
         return 0
     if command == "run-live-wordle-openai":
+        target_date = _target_date_from_args(args)
         run_live_wordle_openai(target_date)
         return 0
     if command == "run-live-wordle-openai-agentic":
+        target_date = _target_date_from_args(args)
         run_live_wordle_openai_agentic(target_date)
         return 0
+    if command == "run-live-wordle-claude-agentic":
+        target_date = _target_date_from_args(args)
+        run_live_wordle_anthropic_agentic(target_date)
+        return 0
+    if command == "run-live-wordle-agentic":
+        provider = args.pop(0) if args and "-" not in args[0] else "openai"
+        target_date = _target_date_from_args(args)
+        run_live_wordle_agentic(target_date, provider=provider)
+        return 0
     if command == "fetch-daily-puzzles":
+        target_date = _target_date_from_args(args)
         BenchmarkRunner(LocalFixtureSandboxProvider()).fetch_daily_puzzles(demo_puzzle_adapters(), target_date)
         return 0
     if command == "recompute-leaderboard":
+        target_date = _target_date_from_args(args)
         recompute_daily_leaderboard(target_date)
         return 0
 
