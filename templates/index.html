@@ -62,21 +62,21 @@
       </section>
 
       <section class="panel">
-        <div class="panel-header">
+        <div class="panel-header centered recent-runs-header">
           <h2>Recent runs</h2>
         </div>
         <div class="run-grid">
           {% for run in recent_runs %}
-          <a class="run-card" href="/runs/{{ run['id'] }}">
+          <div class="run-card">
             <p class="run-top">{{ run["display_name"] }} · {{ run["puzzle_date"] }}</p>
-            <h3>{{ run["model_id"] }}</h3>
+            <h3><a class="run-card-link" href="/runs/{{ run['id'] }}">{{ run["model_id"] }}</a></h3>
             <p>{{ run["provider"] }}</p>
             <p>Status: {{ run["status"] }} / {{ run["solve_status"] or "pending" }}</p>
             <p>Score: {{ "%.1f"|format(run["normalized_score"] or 0) }}</p>
             {% if run["video_path"] %}
-            <p><a href="{{ artifact_url(run['video_path']) }}">Replay</a></p>
+            <p class="run-replay"><a href="{{ artifact_url(run['video_path']) }}">Replay</a></p>
             {% endif %}
-          </a>
+          </div>
           {% else %}
           <p>No benchmark runs have been created yet.</p>
           {% endfor %}

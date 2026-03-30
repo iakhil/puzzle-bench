@@ -102,6 +102,10 @@ h1, h2, h3, p {
   text-align: center;
 }
 
+.recent-runs-header h2 {
+  color: var(--accent);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
@@ -127,9 +131,21 @@ th, td {
   background: rgba(255, 255, 255, 0.74);
 }
 
+.run-card-link {
+  color: inherit;
+}
+
+.run-card-link:hover {
+  color: var(--accent);
+}
+
 .run-top {
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.run-replay {
+  margin-bottom: 0;
 }
 
 pre {
