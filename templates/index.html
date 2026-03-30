@@ -31,7 +31,6 @@
               <th>Solve rate</th>
               <th>Puzzles</th>
               <th>Avg latency</th>
-              <th>Avg cost</th>
               <th>Replay</th>
             </tr>
           </thead>
@@ -44,7 +43,6 @@
               <td>{{ "%.0f"|format(row["solve_rate"] * 100) }}%</td>
               <td>{{ row["puzzle_count"] }}</td>
               <td>{{ "%.0f"|format(row["average_latency_ms"]) }} ms</td>
-              <td>${{ "%.4f"|format(row["average_cost_usd"]) }}</td>
               <td>
                 {% if row["representative_video_path"] %}
                 <a href="{{ artifact_url(row['representative_video_path']) }}">Recording</a>
@@ -55,7 +53,7 @@
             </tr>
             {% else %}
             <tr>
-              <td colspan="8">No runs have been recorded for this date.</td>
+              <td colspan="7">No runs have been recorded for this date.</td>
             </tr>
             {% endfor %}
           </tbody>
