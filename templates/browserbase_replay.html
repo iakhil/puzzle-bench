@@ -45,7 +45,9 @@
             throw new Error(`Replay request failed with ${response.status}`);
           }
           const payload = await response.json();
-          const events = payload.events || payload.rrwebEvents || payload.data || [];
+          const events = Array.isArray(payload)
+            ? payload
+            : (payload.events || payload.rrwebEvents || payload.data || []);
           if (!Array.isArray(events) || events.length === 0) {
             throw new Error("No replay events were returned.");
           }
