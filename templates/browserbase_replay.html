@@ -11,6 +11,12 @@
         display: grid;
         gap: 1rem;
       }
+      .hero.compact {
+        text-align: center;
+      }
+      #status:empty {
+        display: none;
+      }
       #player {
         min-height: 680px;
       }
@@ -21,7 +27,6 @@
       <section class="hero compact">
         <p class="eyebrow">Browser Replay</p>
         <h1>Agent Replay</h1>
-        <p class="lede">Replay this run directly in the app.</p>
       </section>
 
       <section class="panel replay-shell">
@@ -61,7 +66,7 @@
               height: 1200
             }
           });
-          status.textContent = `Loaded ${events.length} replay events.`;
+          status.textContent = "";
         } catch (error) {
           status.textContent = `Replay failed to load: ${error.message}`;
         }
