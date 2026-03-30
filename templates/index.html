@@ -3,24 +3,23 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>game-bench</title>
+    <title>Puzzle Bench</title>
     <link rel="stylesheet" href="/static/styles.css" />
   </head>
   <body>
     <main class="page">
-      <section class="hero">
-        <p class="eyebrow">Daily browser-agent evaluation</p>
-        <h1>Leaderboard for {{ target_date }}</h1>
+      <section class="hero leaderboard-hero">
+        <h1>Puzzle Bench</h1>
         <p class="lede">
-          Fixed-model daily runs across logical puzzles with deterministic scoring,
-          trace capture, and replayable run artifacts.
+          Benchmarking LLMs' ability to use the browser and solve different puzzles.
+          Currently benchmarking Wordle. More puzzles coming soon.
         </p>
+        <p class="lede hero-subtitle">Leaderboard for {{ target_date }}</p>
       </section>
 
       <section class="panel">
-        <div class="panel-header">
+        <div class="panel-header centered">
           <h2>Daily standings</h2>
-          <a href="/leaderboard?date={{ target_date }}">JSON</a>
         </div>
         <table>
           <thead>
@@ -46,11 +45,10 @@
               <td>{{ "%.0f"|format(row["average_latency_ms"]) }} ms</td>
               <td>${{ "%.4f"|format(row["average_cost_usd"]) }}</td>
               <td>
-                {% if row["representative_run_id"] %}
-                <a href="/runs/{{ row['representative_run_id'] }}">Run</a>
-                {% endif %}
                 {% if row["representative_video_path"] %}
-                <br /><a href="{{ artifact_url(row['representative_video_path']) }}">Replay</a>
+                <a href="{{ artifact_url(row['representative_video_path']) }}">Recording</a>
+                {% else %}
+                <span>&mdash;</span>
                 {% endif %}
               </td>
             </tr>
