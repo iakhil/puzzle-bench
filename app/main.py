@@ -5,6 +5,9 @@ import json
 from pathlib import Path
 import threading
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import Body, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -40,12 +43,23 @@ def artifact_url(path: str | None) -> str | None:
     if not path:
         return None
     if path.startswith("https://") or path.startswith("http://"):
-        return path
+        session_id = _browserbase_session_id(path)
+        return f"/replays/browserbase/{session_id}" if session_id else path
     try:
         relative = Path(path).resolve().relative_to(artifact_root.resolve())
     except ValueError:
         return None
     return f"/artifacts/{relative.as_posix()}"
+
+
+def _browserbase_session_id(path: str) -> str | None:
+    parsed = urlparse(path)
+    if parsed.netloc not in {"browserbase.com", "www.browserbase.com"}:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) >= 2 and parts[0] == "sessions":
+        return parts[1]
+    return None
 
 
 @app.on_event("startup")
@@ -102,6 +116,38 @@ def artifact_file(artifact_path: str) -> FileResponse:
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail="Artifact not found")
     return FileResponse(target)
+
+
+@app.get("/replays/browserbase/{session_id}", response_class=HTMLResponse)
+def browserbase_replay_page(request: Request, session_id: str) -> HTMLResponse:
+    return templates.TemplateResponse(
+        request,
+        "browserbase_replay.html",
+        {
+            "request": request,
+            "session_id": session_id,
+        },
+    )
+
+
+@app.get("/replays/browserbase/{session_id}.json", response_class=JSONResponse)
+def browserbase_replay_json(session_id: str) -> JSONResponse:
+    if not settings.browserbase_api_key:
+        raise HTTPException(status_code=503, detail="Browserbase API key is not configured")
+    request = UrlRequest(
+        f"https://api.browserbase.com/v1/sessions/{session_id}/recording",
+        headers={"X-BB-API-Key": settings.browserbase_api_key},
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise HTTPException(status_code=502, detail=f"Browserbase recording fetch failed: {detail}") from exc
+    except URLError as exc:
+        raise HTTPException(status_code=502, detail=f"Browserbase recording fetch failed: {exc.reason}") from exc
+    return JSONResponse(payload)
 
 
 @app.post("/internal/runs/wordle-agentic", response_class=JSONResponse)

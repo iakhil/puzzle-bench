@@ -17,7 +17,7 @@ class MainTests(unittest.TestCase):
         settings = get_settings()
         local_path = str(settings.artifacts_root / "run-1" / "video.webm")
         self.assertEqual(artifact_url(local_path), "/artifacts/run-1/video.webm")
-        self.assertEqual(artifact_url("https://www.browserbase.com/sessions/abc"), "https://www.browserbase.com/sessions/abc")
+        self.assertEqual(artifact_url("https://www.browserbase.com/sessions/abc"), "/replays/browserbase/abc")
         self.assertIsNone(artifact_url("/tmp/outside-artifact"))
 
     def test_settings_support_data_root_and_artifacts_root(self) -> None:

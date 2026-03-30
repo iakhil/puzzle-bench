@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Replay {{ session_id }}</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/style.css" />
+    <style>
+      .replay-shell {
+        display: grid;
+        gap: 1rem;
+      }
+      #player {
+        min-height: 680px;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="page">
+      <section class="hero compact">
+        <p class="eyebrow">Browser Replay</p>
+        <h1>Browserbase Session {{ session_id }}</h1>
+        <p class="lede">Replay this run directly in the app.</p>
+      </section>
+
+      <section class="panel replay-shell">
+        <div class="panel-header">
+          <h2>Replay</h2>
+          <a href="/replays/browserbase/{{ session_id }}.json">JSON</a>
+        </div>
+        <div id="status">Loading replay…</div>
+        <div id="player"></div>
+      </section>
+    </main>
+
+    <script src="https://cdn.jsdelivr.net/npm/rrweb-player@latest/dist/index.js"></script>
+    <script>
+      async function main() {
+        const status = document.getElementById("status");
+        const playerRoot = document.getElementById("player");
+        try {
+          const response = await fetch(`/replays/browserbase/{{ session_id }}.json`);
+          if (!response.ok) {
+            throw new Error(`Replay request failed with ${response.status}`);
+          }
+          const payload = await response.json();
+          const events = payload.events || payload.rrwebEvents || payload.data || [];
+          if (!Array.isArray(events) || events.length === 0) {
+            throw new Error("No replay events were returned.");
+          }
+          new rrwebPlayer({
+            target: playerRoot,
+            props: {
+              events,
+              autoPlay: true,
+              speedOption: [1, 2, 4, 8],
+              width: 1440,
+              height: 1200
+            }
+          });
+          status.textContent = `Loaded ${events.length} replay events.`;
+        } catch (error) {
+          status.textContent = `Replay failed to load: ${error.message}`;
+        }
+      }
+      main();
+    </script>
+  </body>
+</html>
